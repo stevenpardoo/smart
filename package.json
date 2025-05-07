@@ -1,0 +1,11 @@
+{
+  "name": "auto-class",
+  "type": "module",
+  "version": "1.0.0",
+  "scripts": {
+    "start": "node index.js"
+  },
+  "dependencies": {
+    "playwright": "^1.44.0"
+  }
+}
