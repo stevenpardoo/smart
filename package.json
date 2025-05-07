@@ -3,7 +3,8 @@
   "type": "module",
   "version": "1.0.0",
   "scripts": {
-    "start": "node index.js"
+    "start": "node index.js",
+    "postinstall": "npx playwright install chromium"
   },
   "dependencies": {
     "playwright": "^1.44.0"
