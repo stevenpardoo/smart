@@ -1,76 +1,108 @@
 import { chromium } from 'playwright';
+import fs from 'fs/promises';
+
 const { USER_ID, USER_PWD } = process.env;
 if (!USER_ID || !USER_PWD) throw new Error('ENV vars missing');
 
 const H1 = '18:00', H2 = '19:30', SEDE = 'CENTRO MAYOR';
-const MAX = 12, GAP = 5 * 60_000;    // 5 min
-const log = m => console.log(`[${new Date().toISOString()}] ${m}`);
+const MAX = 12, GAP = 5 * 60_000;   // 12 intentos, 5 min
 
-async function run(at) {
-  const b = await chromium.launch({ headless: true });
-  const p = await b.newPage({ viewport: { width:1280, height:800 } });
-  p.setDefaultNavigationTimeout(90_000);
+const stamp = () => new Date().toISOString();
+const log = m => console.log(`[${stamp()}] ${m}`);
+
+async function debugDump(page, tag) {
+  const png = await page.screenshot();
+  const html = await page.content();
+  const b64 = png.toString('base64');
+  await fs.writeFile(`login-fail-${tag}.png`, png);
+  await fs.writeFile(`login-fail-${tag}.html`, html);
+  log(`🖼 Screenshot Base64 (primeros 200 chars): ${b64.slice(0,200)}…`);
+}
+
+async function intento(at) {
+  const browser = await chromium.launch({ headless:true });
+  const page = await browser.newPage({ viewport:{ width:1280, height:800 } });
+  page.setDefaultNavigationTimeout(90_000);
 
   try {
     /* Login */
-    await p.goto('https://schoolpack.smart.edu.co/idiomas/alumnos.aspx');
-    await p.fill('input[name="vUSUCOD"]', USER_ID);
-    await p.fill('input[name="vPASS"]', USER_PWD);
+    await page.goto('https://schoolpack.smart.edu.co/idiomas/alumnos.aspx');
+    await page.fill('input[name="vUSUCOD"]', USER_ID);
+    await page.fill('input[name="vPASS"]', USER_PWD);
     await Promise.all([
-      p.waitForSelector('img[src*="PROGRAMACION"]', { state:'attached' }),
-      p.click('input[value="Confirmar"]')
+      page.click('input[value="Confirmar"]'),
+      page.waitForNavigation({ waitUntil:'domcontentloaded' })
     ]);
 
-    /* Click Programación (forzado) */
-    await p.click('img[src*="PROGRAMACION"]', { force:true });
+    /* Esperamos icono Programación (adjacent o dentro de iframe) */
+    const progIcon = await page
+      .waitForSelector('img[src*="PROGRAMACION"]', { timeout:30_000, state:'attached' })
+      .catch(() => null);
 
-    /* Selección plan */
-    await p.waitForSelector('text=INGB1C1');
-    await p.click('text=INGB1C1');
+    if (!progIcon) {
+      log(`⚠️  Login no mostró icono Programación (intento ${at})`);
+      await debugDump(page, at);
+      await browser.close();
+      return false;
+    }
+
+    /* Dashboard → Programación */
+    await progIcon.click({ force:true });
+
+    /* Plan */
+    await page.waitForSelector('text=INGB1C1');
+    await page.click('text=INGB1C1');
     await Promise.all([
-      p.waitForSelector('text=Programar clases'),
-      p.click('input[value="Iniciar"]')
+      page.click('input[value="Iniciar"]'),
+      page.waitForSelector('text=Programar clases')
     ]);
 
-    /* util */
+    /* util asignar */
     const asignar = async hora => {
-      await p.selectOption('select[name="vTPEAPROBO"]',{ label:'Pendientes por programar'});
-      await p.check('table tbody tr:first-child input[type="checkbox"]');
-      await p.click('input[value="Asignar"]');
+      await page.selectOption('select[name="vTPEAPROBO"]', { label:'Pendientes por programar' });
+      await page.check('table tbody tr:first-child input[type="checkbox"]');
+      await page.click('input[value="Asignar"]');
 
-      await p.selectOption('select[name="vREGCONREG"]',{ label:SEDE });
+      await page.selectOption('select[name="vREGCONREG"]', { label:SEDE });
+      const selDia = await page.waitForSelector('select[name="vDIA"]');
 
-      const selDia = await p.waitForSelector('select[name="vDIA"]');
-      if ((await selDia.evaluate(e=>e.options.length))<2){log('⏸ Sin fechas');await p.click('input[value="Regresar"]');return false;}
+      if ((await selDia.evaluate(e=>e.options.length)) < 2) {
+        log('⏸ Sin fecha disponible'); await page.click('input[value="Regresar"]'); return false;
+      }
       await selDia.selectOption({ index:1 });
 
-      if (await p.$('text=No hay salones disponibles')){log('⏸ Sin salones');await p.click('input[value="Regresar"]');return false;}
+      if (await page.$('text=No hay salones disponibles')) {
+        log('⏸ Sin salones'); await page.click('input[value="Regresar"]'); return false;
+      }
 
-      const row = await p.$(`text="${hora}"`);
-      if(!row){log(`⏸ No listada ${hora}`);await p.click('input[value="Regresar"]');return false;}
-      await row.click();
+      const fila = await page.$(`text="${hora}"`);
+      if (!fila) { log(`⏸ Hora ${hora} no listada`); await page.click('input[value="Regresar"]'); return false; }
+      await fila.click();
       await Promise.all([
-        p.click('input[value="Confirmar"]'),
-        p.waitForSelector('text=Clase asignada').catch(()=>null)
+        page.click('input[value="Confirmar"]'),
+        page.waitForSelector('text=Clase asignada').catch(()=>null)
       ]);
       log(`✅ ${hora} confirmada`);
       return true;
     };
 
     const ok = (await asignar(H1)) | (await asignar(H2));
-    await b.close(); return ok;
-  } catch(e){
-    log(`⚠️  Error intento ${at}: ${e.message}`);
-    await p.screenshot({ path:`login-fail-${Date.now()}.png` });
-    await b.close(); return false;
+    await browser.close();
+    return ok;
+  } catch (e) {
+    log(`❌ Excepción: ${e.message}`);
+    await debugDump(page, `exception-${at}`);
+    await browser.close();
+    return false;
   }
 }
 
-(async()=>{
-  for(let i=1;i<=MAX;i++){
+(async () => {
+  for (let i=1; i<=MAX; i++){
     log(`🔄 Intento ${i}/${MAX}`);
-    if(await run(i)){log('🎉 Agendamiento completo');process.exit(0);}
-    if(i<MAX){log('⏱ Espera 5 min');await new Promise(r=>setTimeout(r,GAP));}
+    if (await intento(i)) { log('🎉 Agendamiento completo'); process.exit(0); }
+    if (i<MAX){ log('⏱ Espera 5 min'); await new Promise(r=>setTimeout(r,GAP)); }
   }
-  log('🚫 Máximo de intentos sin éxito');process.exit(0);
+  log('🚫 Máximo de intentos sin éxito');
+  process.exit(0);
 })();
