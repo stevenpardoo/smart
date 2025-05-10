@@ -5,10 +5,11 @@
   "main": "index.cjs",
   "scripts": {
     "start": "node index.cjs",
-    "postinstall": "npx playwright install --with-deps"
+    "postinstall": "npx playwright install --with-deps chromium"
   },
   "dependencies": {
     "playwright": "^1.44.0",
-    "discord-webhook-node": "2.3.7"
+    "discord-webhook-node": "2.3.6",
+    "dayjs": "^1.11.10"
   }
 }
