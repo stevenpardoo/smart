@@ -1,14 +1,13 @@
 {
   "name": "auto-class",
   "version": "1.0.0",
+  "type": "commonjs",          // 👈  CommonJS para usar require()
   "main": "index.cjs",
   "scripts": {
     "start": "node index.cjs",
-    "postinstall": "npx playwright install chromium"
+    "postinstall": "npx playwright install --with-deps"
   },
   "dependencies": {
-    "playwright": "^1.44.0",
-    "node-fetch": "^2.6.7",
-    "dotenv": "^16.4.5"
+    "playwright": "^1.44.0"
   }
 }
