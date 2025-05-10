@@ -19,8 +19,8 @@ const webhook = process.env.DISCORD_WEBHOOK;
     console.log("Modal no detectado.");
   }
 
-  await page.fill('#vUSUCOD', 'TU_USUARIO');
-  await page.fill('#vPASS', 'TU_CONTRASEÑA');
+  await page.fill('#vUSUCOD', '1023928198');
+  await page.fill('#vPASS', 'Pardo93.');
   await page.click('#BUTTON1');
 
   await page.waitForTimeout(3000); // espera que cargue
