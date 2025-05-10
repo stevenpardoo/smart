@@ -1,4 +1,6 @@
-import { chromium } from "playwright";
+const { chromium } = require("playwright");
+const fetch = require("node-fetch");
+const fs = require("fs");
 
 const webhook = process.env.DISCORD_WEBHOOK;
 
@@ -8,30 +10,36 @@ const webhook = process.env.DISCORD_WEBHOOK;
   const page = await context.newPage();
 
   await page.goto("https://schoolpack.smart.edu.co/idiomas/");
-  
-  // Esperar el modal y cerrarlo si aparece
+
+  // Cierra el modal si aparece
   try {
     await page.waitForSelector('#gxp0_cls', { timeout: 5000 });
     await page.click('#gxp0_cls');
   } catch (e) {
-    console.log("Modal no detectado o ya cerrado");
+    console.log("Modal no detectado.");
   }
 
-  // Continuar con login
   await page.fill('#vUSUCOD', 'TU_USUARIO');
   await page.fill('#vPASS', 'TU_CONTRASEÑA');
   await page.click('#BUTTON1');
 
-  // Esperar navegación o validar éxito del login aquí
+  await page.waitForTimeout(3000); // espera que cargue
 
-  // Enviar imagen al webhook de Discord
-  const buffer = await page.screenshot();
-  const response = await fetch(webhook, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+  const screenshotBuffer = await page.screenshot();
+
+  await fetch(webhook, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json"
+    },
     body: JSON.stringify({
-      content: "Resultado de login",
-      files: [{ name: "screenshot.png", file: buffer.toString("base64") }]
+      content: "Resultado del login",
+      files: [
+        {
+          name: "screenshot.png",
+          file: screenshotBuffer.toString("base64")
+        }
+      ]
     })
   });
 
