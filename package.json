@@ -8,6 +8,7 @@
     "postinstall": "npx playwright install --with-deps"
   },
   "dependencies": {
-    "playwright": "^1.44.0"
+    "playwright": "^1.44.0",
+    "discord-webhook-node": "^2.3.6"
   }
 }
