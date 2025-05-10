@@ -1,47 +1,47 @@
-// index.cjs – flujo de login sin que el modal lo bloquee
-const { chromium } = require("playwright");
+const { chromium } = require('playwright');
+const { Webhook, MessageBuilder } = require('discord-webhook-node');
 
-// ⚙️  Variables de entorno (configúralas en Railway → Variables)
-const URL      = process.env.TARGET_URL || "https://schoolpack.smart.edu.co/idiomas/alumnos.aspx";
-const USER_ID  = process.env.USER_ID;
-const USER_PWD = process.env.USER_PWD;
+const hook = new Webhook(process.env.DISCORD_WEBHOOK_URL);
 
-if (!USER_ID || !USER_PWD) {
-  console.error("❌  USER_ID y/o USER_PWD no están definidos en las variables de entorno.");
-  process.exit(1);
-}
+// ⚙️  configura aquí tu usuario / pass
+const USER = process.env.SMART_USER;
+const PASS = process.env.SMART_PASS;
 
 (async () => {
   const browser = await chromium.launch({ headless: true });
-  const page    = await browser.newPage();
+  const page = await browser.newPage();
 
   try {
-    // 1) Ir a la página
-    await page.goto(URL, { waitUntil: "domcontentloaded", timeout: 60_000 });
+    // 1. Login
+    await page.goto('https://schoolpack.smart.edu.co/idiomas/alumnos.aspx', { waitUntil: 'domcontentloaded' });
+    await page.fill("input[name='vUSUCOD']", USER);
+    await page.fill("input[name='vPASS']", PASS);
+    await page.click("#BUTTON1");                    // Confirmar
+    await page.waitForNavigation();
 
-    // 2) Cerrar cualquier modal GeneXus que estorbe
-    const modalClose = page.locator(".gx-popup-close");           // selector genérico
-    if (await modalClose.count()) {
-      await modalClose.first().click();
-      await modalClose.first().waitFor({ state: "detached", timeout: 10_000 })
-        .catch(() => {});                                         // ya se fue
-    }
+    // 2. Ir a agenda y reservar (…tu flujo existente…)
+    // ↳ cuando sepas que la reserva se completó:
+    const shot1 = 'agenda.png';
+    await page.screenshot({ path: shot1, fullPage: true });
 
-    // 3) Completar formulario
-    await page.locator("input[name='vUSUCOD']").waitFor({ state: "visible", timeout: 15_000 });
-    await page.fill("input[name='vUSUCOD']", USER_ID);
-    await page.fill("input[name='vPASS']",   USER_PWD);
-    await page.click("input[name='BUTTON1']");
+    // 3. Mandar la captura al canal
+    const card = new MessageBuilder()
+      .setName('Auto‑Class Bot')
+      .setText('✅ Clase agendada correctamente')
+      .setColor('#00b894');
 
-    // 4) Esperar navegación / éxito
-    await page.waitForLoadState("networkidle", { timeout: 60_000 });
+    await hook.send(card);          // mensaje
+    await hook.sendFile(shot1);     // imagen
 
-    // 5) Captura opcional para inspección
-    await page.screenshot({ path: "success.png", fullPage: true });
-    console.log("✅  Flujo completado sin errores");
+    // 4. ( Opcional ) captura final de “flujo completo”
+    const shot2 = 'final.png';
+    await page.screenshot({ path: shot2, fullPage: true });
+    await hook.sendFile(shot2);
 
+    console.log('✅  Flujo completado y capturas enviadas');
   } catch (err) {
-    console.error("❌  Error en el flujo:", err);
+    console.error(err);
+    await hook.error(`❌ Ocurrió un error:\n\`\`\`${err.message}\`\`\``);
     process.exit(1);
   } finally {
     await browser.close();
