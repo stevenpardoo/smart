@@ -1,20 +1,13 @@
 {
   "name": "auto-class",
-  "type": "module",
   "version": "1.0.0",
+  "type": "module",
+  "main": "index.cjs",
   "scripts": {
-    "start": "node index.js",
+    "start": "node index.cjs",
     "postinstall": "npx playwright install chromium"
   },
   "dependencies": {
     "playwright": "^1.44.0"
-    {
-    "type": "module",      //  ➜ ¡déjalo así!
-  "main": "index.cjs",   //  ← nuevo punto de entrada
-  "scripts": {
-    "start": "node index.cjs"
-  }
-}
-
   }
 }
