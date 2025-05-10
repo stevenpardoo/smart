@@ -1,47 +1,84 @@
+/*  Auto‑Class Bot  – cierra el modal, reserva la clase y
+    envía 2 capturas de pantalla a Discord                  */
+
 const { chromium } = require('playwright');
 const { Webhook, MessageBuilder } = require('discord-webhook-node');
+const dayjs = require('dayjs');
 
-const hook = new Webhook(process.env.DISCORD_WEBHOOK_URL);
+// ▸ Configura estas variables en Railway › Variables
+const USER_ID      = process.env.USER_ID;       // ej. 1023928198
+const USER_PASS    = process.env.USER_PASS;     // ej. Pardo93.
+const WEBHOOK_URL  = process.env.WEBHOOK_URL;   // URL del webhook de Discord
 
-// ⚙️  configura aquí tu usuario / pass
-const USER = process.env.SMART_USER;
-const PASS = process.env.SMART_PASS;
+if (!USER_ID || !USER_PASS || !WEBHOOK_URL) {
+  console.error('❌  Faltan variables de entorno (USER_ID, USER_PASS o WEBHOOK_URL).');
+  process.exit(1);
+}
+
+const hook = new Webhook(WEBHOOK_URL);
 
 (async () => {
-  const browser = await chromium.launch({ headless: true });
-  const page = await browser.newPage();
+  const browser  = await chromium.launch({ headless: true });
+  const context  = await browser.newContext({ viewport: { width: 1280, height: 720 } });
+  const page     = await context.newPage();
 
   try {
-    // 1. Login
-    await page.goto('https://schoolpack.smart.edu.co/idiomas/alumnos.aspx', { waitUntil: 'domcontentloaded' });
-    await page.fill("input[name='vUSUCOD']", USER);
-    await page.fill("input[name='vPASS']", PASS);
-    await page.click("#BUTTON1");                    // Confirmar
-    await page.waitForNavigation();
+    /* 1. Abrir la página de login */
+    await page.goto('https://schoolpack.smart.edu.co/idiomas/alumnos.aspx',
+                    { waitUntil: 'domcontentloaded' });
 
-    // 2. Ir a agenda y reservar (…tu flujo existente…)
-    // ↳ cuando sepas que la reserva se completó:
-    const shot1 = 'agenda.png';
-    await page.screenshot({ path: shot1, fullPage: true });
+    /* 2. Cerrar el pop‑up (si aparece) */
+    try {
+      const closeBtn = page.locator('#gxp0_cls');
+      if (await closeBtn.isVisible({ timeout: 5000 })) {
+        await closeBtn.click();
+        console.log('🗙  Modal cerrado');
+      }
+    } catch { /* si no aparece, seguimos */ }
 
-    // 3. Mandar la captura al canal
-    const card = new MessageBuilder()
-      .setName('Auto‑Class Bot')
-      .setText('✅ Clase agendada correctamente')
-      .setColor('#00b894');
+    /* 3. Login */
+    await page.fill('input[name="vUSUCOD"]', USER_ID);
+    await page.fill('input[name="vPASS"]',   USER_PASS);
+    await page.click('input[name="BUTTON1"]');          // botón “Confirmar”
+    await page.waitForNavigation({ waitUntil: 'networkidle' });
 
-    await hook.send(card);          // mensaje
-    await hook.sendFile(shot1);     // imagen
+    /* 4. Ir a “Agendar Clase”  (ajusta selector si cambia) */
+    await page.click('text=Agendar Clase');
+    await page.waitForLoadState('networkidle');
 
-    // 4. ( Opcional ) captura final de “flujo completo”
-    const shot2 = 'final.png';
-    await page.screenshot({ path: shot2, fullPage: true });
-    await hook.sendFile(shot2);
+    /* 5. Screenshot antes de confirmar */
+    const stamp = dayjs().format('YYYY-MM-DD_HH-mm-ss');
+    const pre   = `before_${stamp}.png`;
+    await page.screenshot({ path: pre, fullPage: true });
 
-    console.log('✅  Flujo completado y capturas enviadas');
+    /* 6. Confirmar reserva  (ajusta selector) */
+    await page.click('text=Confirmar');
+    await page.waitForLoadState('networkidle');
+
+    /* 7. Screenshot después */
+    const post  = `after_${stamp}.png`;
+    await page.screenshot({ path: post, fullPage: true });
+
+    /* 8. Enviar a Discord */
+    const msgOk = new MessageBuilder()
+      .setTitle('✅ Clase agendada')
+      .setDescription(`Capturas generadas el ${dayjs().format('DD/MM/YYYY HH:mm')}`)
+      .setColor('#00ff00');
+
+    await hook.send(msgOk);
+    await hook.sendFile(pre);
+    await hook.sendFile(post);
+
+    console.log('✅  Flujo completado sin errores');
   } catch (err) {
     console.error(err);
-    await hook.error(`❌ Ocurrió un error:\n\`\`\`${err.message}\`\`\``);
+
+    const msgErr = new MessageBuilder()
+      .setTitle('❌ Error en el bot')
+      .setDescription(err.message)
+      .setColor('#ff0000');
+
+    await hook.send(msgErr);
     process.exit(1);
   } finally {
     await browser.close();
