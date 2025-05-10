@@ -1,47 +1,52 @@
+require("dotenv").config();
 const { chromium } = require("playwright");
 const fetch = require("node-fetch");
-const fs = require("fs");
 
-const webhook = process.env.DISCORD_WEBHOOK;
+const LOGIN_URL = "https://schoolpack.smart.edu.co/idiomas/";
+const USER = process.env.USER_SMART;
+const PASS = process.env.PASS_SMART;
+const WEBHOOK = process.env.DISCORD_WEBHOOK;
 
 (async () => {
+  // 1. Lanzar navegador headless
   const browser = await chromium.launch({ headless: true });
-  const context = await browser.newContext();
-  const page = await context.newPage();
+  const ctx = await browser.newContext();
+  const page = await ctx.newPage();
 
-  await page.goto("https://schoolpack.smart.edu.co/idiomas/");
+  // 2. Ir a la página
+  await page.goto(LOGIN_URL, { waitUntil: "domcontentloaded" });
 
-  // Cierra el modal si aparece
-  try {
-    await page.waitForSelector('#gxp0_cls', { timeout: 5000 });
-    await page.click('#gxp0_cls');
-  } catch (e) {
-    console.log("Modal no detectado.");
+  // 3. Si aparece el modal, cerrarlo
+  const modalClose = page.locator("#gxp0_cls");
+  if (await modalClose.isVisible({ timeout: 5000 }).catch(() => false)) {
+    await modalClose.click();
   }
 
-  await page.fill('#vUSUCOD', '1023928198');
-  await page.fill('#vPASS', 'Pardo93.');
-  await page.click('#BUTTON1');
+  // 4. Esperar al formulario real (se oculta si el modal sigue abierto)
+  await page.locator("input[name='vUSUCOD']").waitFor({ state: "visible", timeout: 15000 });
 
-  await page.waitForTimeout(3000); // espera que cargue
+  // 5. Rellenar credenciales
+  await page.fill("input[name='vUSUCOD']", USER);
+  await page.fill("input[name='vPASS']", PASS);
+  await page.click("input#BUTTON1");
 
-  const screenshotBuffer = await page.screenshot();
+  // 6. Esperar redirección o error
+  await page.waitForLoadState("networkidle", { timeout: 20000 });
 
-  await fetch(webhook, {
+  // 7. Captura de pantalla
+  const buffer = await page.screenshot();
+
+  // 8. Enviar a Discord
+  await fetch(WEBHOOK, {
     method: "POST",
-    headers: {
-      "Content-Type": "application/json"
-    },
+    headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
       content: "Resultado del login",
-      files: [
-        {
-          name: "screenshot.png",
-          file: screenshotBuffer.toString("base64")
-        }
-      ]
+      username: "RailwayBot",
+      files: [{ name: "screenshot.png", file: buffer.toString("base64") }]
     })
   });
 
   await browser.close();
+  console.log("✅ Proceso terminado sin errores.");
 })();
