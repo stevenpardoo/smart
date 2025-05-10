@@ -1,7 +1,7 @@
 {
   "name": "auto-class",
   "version": "1.0.0",
-  "type": "commonjs",          // 👈  CommonJS para usar require()
+  "type": "commonjs",
   "main": "index.cjs",
   "scripts": {
     "start": "node index.cjs",
