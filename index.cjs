@@ -1,52 +1,49 @@
-require("dotenv").config();
+// index.cjs – flujo de login sin que el modal lo bloquee
 const { chromium } = require("playwright");
-const fetch = require("node-fetch");
 
-const LOGIN_URL = "https://schoolpack.smart.edu.co/idiomas/";
-const USER = process.env.USER_SMART;
-const PASS = process.env.PASS_SMART;
-const WEBHOOK = process.env.DISCORD_WEBHOOK;
+// ⚙️  Variables de entorno (configúralas en Railway → Variables)
+const URL      = process.env.TARGET_URL || "https://schoolpack.smart.edu.co/idiomas/alumnos.aspx";
+const USER_ID  = process.env.USER_ID;
+const USER_PWD = process.env.USER_PWD;
+
+if (!USER_ID || !USER_PWD) {
+  console.error("❌  USER_ID y/o USER_PWD no están definidos en las variables de entorno.");
+  process.exit(1);
+}
 
 (async () => {
-  // 1. Lanzar navegador headless
   const browser = await chromium.launch({ headless: true });
-  const ctx = await browser.newContext();
-  const page = await ctx.newPage();
+  const page    = await browser.newPage();
 
-  // 2. Ir a la página
-  await page.goto(LOGIN_URL, { waitUntil: "domcontentloaded" });
+  try {
+    // 1) Ir a la página
+    await page.goto(URL, { waitUntil: "domcontentloaded", timeout: 60_000 });
 
-  // 3. Si aparece el modal, cerrarlo
-  const modalClose = page.locator("#gxp0_cls");
-  if (await modalClose.isVisible({ timeout: 5000 }).catch(() => false)) {
-    await modalClose.click();
+    // 2) Cerrar cualquier modal GeneXus que estorbe
+    const modalClose = page.locator(".gx-popup-close");           // selector genérico
+    if (await modalClose.count()) {
+      await modalClose.first().click();
+      await modalClose.first().waitFor({ state: "detached", timeout: 10_000 })
+        .catch(() => {});                                         // ya se fue
+    }
+
+    // 3) Completar formulario
+    await page.locator("input[name='vUSUCOD']").waitFor({ state: "visible", timeout: 15_000 });
+    await page.fill("input[name='vUSUCOD']", USER_ID);
+    await page.fill("input[name='vPASS']",   USER_PWD);
+    await page.click("input[name='BUTTON1']");
+
+    // 4) Esperar navegación / éxito
+    await page.waitForLoadState("networkidle", { timeout: 60_000 });
+
+    // 5) Captura opcional para inspección
+    await page.screenshot({ path: "success.png", fullPage: true });
+    console.log("✅  Flujo completado sin errores");
+
+  } catch (err) {
+    console.error("❌  Error en el flujo:", err);
+    process.exit(1);
+  } finally {
+    await browser.close();
   }
-
-  // 4. Esperar al formulario real (se oculta si el modal sigue abierto)
-  await page.locator("input[name='vUSUCOD']").waitFor({ state: "visible", timeout: 15000 });
-
-  // 5. Rellenar credenciales
-  await page.fill("input[name='vUSUCOD']", USER);
-  await page.fill("input[name='vPASS']", PASS);
-  await page.click("input#BUTTON1");
-
-  // 6. Esperar redirección o error
-  await page.waitForLoadState("networkidle", { timeout: 20000 });
-
-  // 7. Captura de pantalla
-  const buffer = await page.screenshot();
-
-  // 8. Enviar a Discord
-  await fetch(WEBHOOK, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      content: "Resultado del login",
-      username: "RailwayBot",
-      files: [{ name: "screenshot.png", file: buffer.toString("base64") }]
-    })
-  });
-
-  await browser.close();
-  console.log("✅ Proceso terminado sin errores.");
 })();
