@@ -86,10 +86,11 @@ function stamp(name){ return `${name}_${dayjs().format("YYYY-MM-DD_HH-mm-ss")}.p
     /* 7. Loop para los dos horarios solicitados -------------*/
     for (const hora of HORAS_A_TOMAR) {
       // 7‑a  seleccionar primera fila pendiente
-      const primeraFila = page.locator('input[type="checkbox"], input[type="radio"]').first();
-      if (!await primeraFila.isVisible().catch(()=>false))
-        throw new Error(`No hay filas pendientes para asignar (${hora}).`);
-      await primeraFila.check();
+      // 7‑d  Día: segunda opción (index 1)
+    const dias = await page.$$('select[name="VFDIA"] option:not([disabled])');
+    if (dias.length < 2) throw new Error("La lista de días solo tiene una opción.");
+    const valueDia = await dias[1].getAttribute("value");
+    await page.selectOption('select[name="VFDIA"]', valueDia);
 
       // 7‑b  “Asignar”
       await page.click('text=Asignar');
