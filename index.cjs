@@ -1,10 +1,4 @@
-
----
-
-### index.cjs  — nueva lógica para buscar dentro de iframes + trazas
-
-```js
-/* Auto‑Class Bot ‑ agenda la clase y manda capturas a Discord */
+/*  Auto‑Class Bot  – agenda la clase y manda capturas a Discord  */
 
 const { chromium } = require('playwright');
 const { Webhook, MessageBuilder } = require('discord-webhook-node');
@@ -12,7 +6,7 @@ const dayjs = require('dayjs');
 
 const { USER_ID, USER_PASS, WEBHOOK_URL } = process.env;
 if (!USER_ID || !USER_PASS || !WEBHOOK_URL) {
-  console.error('❌  Variables de entorno incompletas');
+  console.error('❌  Faltan variables de entorno.');
   process.exit(1);
 }
 const hook = new Webhook(WEBHOOK_URL);
@@ -24,7 +18,7 @@ const hook = new Webhook(WEBHOOK_URL);
   page.setDefaultTimeout(90_000);
 
   /* ---------- util para reportar fallos ---------- */
-  async function report(err, label = 'Crash') {
+  async function report(label, err) {
     console.error(err);
     const ts   = dayjs().format('YYYY-MM-DD_HH-mm-ss');
     const snap = `${label}_${ts}.png`;
@@ -42,13 +36,13 @@ const hook = new Webhook(WEBHOOK_URL);
   /* ---------------------------------------------- */
 
   try {
-    /* 1 · Login page */
+    /* 1 · Login */
     await page.goto('https://schoolpack.smart.edu.co/idiomas/alumnos.aspx',
                     { waitUntil:'domcontentloaded' });
 
-    /* 2 · Cerrar popup si aparece */
+    /* 2 · Cerrar popup (si aparece) */
     const close = page.locator('#gxp0_cls');
-    if (await close.isVisible({ timeout:5000 }).catch(()=>false)) {
+    if (await close.isVisible({ timeout:5_000 }).catch(()=>false)) {
       await close.click();
       console.log('🗙 Modal cerrado');
     }
@@ -57,44 +51,45 @@ const hook = new Webhook(WEBHOOK_URL);
     await page.fill('input[name="vUSUCOD"]', USER_ID);
     await page.fill('input[name="vPASS"]',   USER_PASS);
     await page.click('input[name="BUTTON1"]');
+    console.log('↻ Esperando menú principal…');
 
-    /* 4 · Esperamos que el menú esté cargado en cualquier frame */
-    console.log('↻ Buscando “Agendar Clase”…');
-    let agendaLocator;
-    const maxWait = Date.now() + 60_000;     // 60 s máx
-    while (!agendaLocator && Date.now() < maxWait) {
-      // revisa página principal …
-      let loc = page.locator('text=Agendar Clase');
-      if (await loc.count()) agendaLocator = loc.first();
+    /* 4 · Buscar el icono “PROGRAMACION / Matriculas” en todos los iframes */
+    let icon;
+    const límite = Date.now() + 60_000;
+    while (!icon && Date.now() < límite) {
+      // documento principal
+      icon = page.locator('img[alt="Matriculas"], img[title="Matriculas"]')
+                 .first();
+      if (await icon.count()) break;
 
-      // … y luego todos los iframes
-      if (!agendaLocator) {
-        for (const f of page.frames()) {
-          loc = f.locator('text=Agendar Clase');
-          if (await loc.count()) { agendaLocator = loc.first(); break; }
-        }
+      // iframes
+      for (const f of page.frames()) {
+        const tmp = f.locator('img[alt="Matriculas"], img[title="Matriculas"]')
+                     .first();
+        if (await tmp.count()) { icon = tmp; break; }
       }
-      if (!agendaLocator) await page.waitForTimeout(1000);
+      if (!await icon.count()) await page.waitForTimeout(1000);
     }
-    if (!agendaLocator) throw new Error('No apareció el enlace “Agendar Clase”');
+    if (!await icon.count()) throw new Error('No apareció el icono “Matriculas”.');
 
-    /* 5 · Entrar a la pantalla de agenda */
-    await agendaLocator.click();
-    await page.waitForSelector('text=Confirmar', { timeout:30_000 });
+    /* 5 · Entrar al módulo de programación */
+    await icon.click();
+    await page.waitForLoadState('networkidle');
 
-    const ts = dayjs().format('YYYY-MM-DD_HH-mm-ss');
+    /* 6 · Captura antes de confirmar */
+    const ts     = dayjs().format('YYYY-MM-DD_HH-mm-ss');
     const before = `before_${ts}.png`;
     await page.screenshot({ path:before, fullPage:true });
 
-    /* 6 · Confirmar */
-    await page.click('text=Confirmar');
-    await page.waitForSelector('text=Clase agendada', { timeout:30_000 })
-              .catch(()=>{/* algunos sitios no muestran texto final */});
+    /* 7 · Confirmar reserva */
+    await page.click('text=Confirmar').catch(()=>{});
+    await page.waitForLoadState('networkidle');
 
+    /* 8 · Captura después */
     const after = `after_${ts}.png`;
     await page.screenshot({ path:after, fullPage:true });
 
-    /* 7 · Discord OK */
+    /* 9 · Discord OK */
     const ok = new MessageBuilder()
       .setTitle('✅ Clase agendada')
       .setDescription(dayjs().format('DD/MM/YYYY HH:mm'))
@@ -105,7 +100,7 @@ const hook = new Webhook(WEBHOOK_URL);
 
     console.log('✅ Proceso terminado sin errores');
   } catch (err) {
-    await report(err);
+    await report('Crash', err);
     process.exit(1);
   } finally {
     await browser.close();
