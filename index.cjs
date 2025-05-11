@@ -72,7 +72,7 @@ const stamp = n => `${n}_${dayjs().format("YYYY-MM-DD_HH-mm-ss")}.png`;
     await page.waitForLoadState("networkidle");
 
     /* 5. Filtrar “Pendientes por programar” (valor exacto del <option>) */
-    await page.selectOption('select[name="VTAPROBO"]', { value:"P" }); // ← cambia “P” si tu opción usa otro value
+    await page.selectOption('select[name="VTAPROBO"]', { value:"2" }); // ← cambia “P” si tu opción usa otro value
     await page.waitForLoadState("networkidle");
 
     /* 6. Captura listado */
