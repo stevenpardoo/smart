@@ -12,9 +12,9 @@ if (!USER_ID || !USER_PASS || !WEBHOOK_URL) {
   console.error("❌  Faltan USER_ID, USER_PASS o WEBHOOK_URL"); process.exit(1);
 }
 
-const PLAN_TEXT      = /ING-B1, B2 Y C1 PLAN 582H/i;   // texto exacto del plan
-const SEDE_TEXT      = "CENTRO MAYOR";                 // sede a elegir
-const HORAS_A_TOMAR  = ["18:00", "19:30"];             // horarios en orden
+const PLAN_TEXT      = /ING-B1, B2 Y C1 PLAN 582H/i;      // texto exacto del plan
+const SEDE_TEXT      = "CENTRO MAYOR";                    // sede a elegir
+const HORAS_A_TOMAR  = ["18:00", "19:30"];                // horarios en orden
 
 /* ──────────────────────── Discord hook ───────────────────── */
 
@@ -75,7 +75,7 @@ function stamp(name){ return `${name}_${dayjs().format("YYYY-MM-DD_HH-mm-ss")}.p
     await page.waitForLoadState("networkidle");
 
     /* 5. Filtro “Pendientes por programar” -------------------*/
-    await page.selectOption('select[name="VTAPROBO"]',        // combo Estado de las clases
+    await page.selectOption('select[name="VTAPROBO"]',
                             { label: /Pendientes.*programar/i });
     await page.waitForLoadState("networkidle");
 
@@ -85,30 +85,28 @@ function stamp(name){ return `${name}_${dayjs().format("YYYY-MM-DD_HH-mm-ss")}.p
 
     /* 7. Loop para los dos horarios solicitados -------------*/
     for (const hora of HORAS_A_TOMAR) {
-      // 7‑a  seleccionar primera fila pendiente
-      // 7‑d  Día: segunda opción (index 1)
-    const dias = await page.$$('select[name="VFDIA"] option:not([disabled])');
-    if (dias.length < 2) throw new Error("La lista de días solo tiene una opción.");
-    const valueDia = await dias[1].getAttribute("value");
-    await page.selectOption('select[name="VFDIA"]', valueDia);
+      /* 7‑a  Seleccionar la primera fila pendiente */
+      const filasPend = page.locator('input[type="checkbox"][name="vCHECK"]').filter({ hasNot: page.locator('[disabled]')});
+      if (!await filasPend.count()) throw new Error("No hay filas pendientes.");
+      await filasPend.first().check();
 
-      // 7‑b  “Asignar”
+      /* 7‑b  “Asignar” */
       await page.click('text=Asignar');
       await page.waitForLoadState("networkidle");
 
-      // 7‑c  Sede
+      /* 7‑c  Sede */
       await page.selectOption('select[name="VTSEDE"]', { label: SEDE_TEXT });
 
-      // 7‑d  Día: segunda opción (index 1)
-      const dias = await page.$$('select[name="VFDIA"] option:not([disabled])');
-      if (dias.length < 2) throw new Error("La lista de días solo tiene una opción.");
-      const valueDia = await dias[1].getAttribute("value");
+      /* 7‑d  Día: segunda opción (index 1) */
+      const opcionesDia = await page.$$('select[name="VFDIA"] option:not([disabled])');
+      if (opcionesDia.length < 2) throw new Error("La lista de días solo tiene una opción.");
+      const valueDia = await opcionesDia[1].getAttribute("value");
       await page.selectOption('select[name="VFDIA"]', valueDia);
 
-      // 7‑e  Hora
+      /* 7‑e  Hora */
       await page.selectOption('select[name="VFHORA"]', { label: hora });
 
-      // 7‑f  Confirmar
+      /* 7‑f  Confirmar */
       await page.click('text=Confirmar');
       await page.waitForLoadState("networkidle");
     }
