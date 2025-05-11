@@ -9,7 +9,7 @@
   },
   "dependencies": {
     "playwright": "^1.44.0",
-    "discord-webhook-node": "2.3.6",
+    "discord-webhook-node": "^1.1.8",
     "dayjs": "^1.11.10"
   }
 }
