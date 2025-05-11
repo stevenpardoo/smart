@@ -1,17 +1,15 @@
-/*  Auto‑Class Bot  – cierra el modal, reserva la clase y
-    envía 2 capturas de pantalla a Discord                  */
+/*  Auto‑Class Bot – agenda la clase y manda capturas a Discord  */
 
 const { chromium } = require('playwright');
 const { Webhook, MessageBuilder } = require('discord-webhook-node');
 const dayjs = require('dayjs');
 
-// ▸ Configura estas variables en Railway › Variables
-const USER_ID     = process.env.USER_ID;     // ej. 1023928198
-const USER_PASS   = process.env.USER_PASS;   // ej. Pardo93.
-const WEBHOOK_URL = process.env.WEBHOOK_URL; // URL del webhook de Discord
+const USER_ID     = process.env.USER_ID;
+const USER_PASS   = process.env.USER_PASS;
+const WEBHOOK_URL = process.env.WEBHOOK_URL;
 
 if (!USER_ID || !USER_PASS || !WEBHOOK_URL) {
-  console.error('❌  Faltan variables de entorno (USER_ID, USER_PASS o WEBHOOK_URL).');
+  console.error('❌  Faltan variables de entorno');
   process.exit(1);
 }
 
@@ -21,64 +19,75 @@ const hook = new Webhook(WEBHOOK_URL);
   const browser = await chromium.launch({ headless: true });
   const context = await browser.newContext({ viewport: { width: 1280, height: 720 } });
   const page    = await context.newPage();
+  page.setDefaultTimeout(60_000);              // 60 s por si la red está lenta
+
+  /* util: reporta error con screenshot + html */
+  async function reportCrash(err) {
+    const ts   = dayjs().format('YYYY-MM-DD_HH-mm-ss');
+    const snap = `crash_${ts}.png`;
+    await page.screenshot({ path: snap, fullPage: true }).catch(()=>{});
+    const html = await page.content().catch(()=>'');
+
+    const embed = new MessageBuilder()
+      .setTitle('❌ Bot falló')
+      .addField('Error', err.message.slice(0,1024))
+      .setColor('#ff0000')
+      .setTimestamp();
+
+    await hook.send(embed).catch(()=>{});
+    await hook.sendFile(snap).catch(()=>{});
+    await hook.send(`\`\`\`html\n${html.slice(0,1900)}\n\`\`\``).catch(()=>{});
+  }
 
   try {
-    /* 1. Abrir la página de login */
+    /* 1 · login page */
     await page.goto('https://schoolpack.smart.edu.co/idiomas/alumnos.aspx',
-                    { waitUntil: 'domcontentloaded' });
+                    { waitUntil:'domcontentloaded' });
 
-    /* 2. Cerrar el pop‑up (si aparece) */
-    try {
-      const closeBtn = page.locator('#gxp0_cls');
-      if (await closeBtn.isVisible({ timeout: 5_000 })) {
-        await closeBtn.click();
-        console.log('🗙  Modal cerrado');
-      }
-    } catch {/* no apareció, seguimos */}
+    /* 2 · cierra modal si existe */
+    const modal = page.locator('#gxp0_cls');
+    if (await modal.isVisible({ timeout:5000 }).catch(()=>false)) {
+      await modal.click();
+      console.log('🗙 Modal cerrado');
+    }
 
-    /* 3. Login */
+    /* 3 · credenciales */
     await page.fill('input[name="vUSUCOD"]', USER_ID);
     await page.fill('input[name="vPASS"]',   USER_PASS);
-    await page.click('input[name="BUTTON1"]');          // “Confirmar”
-    await page.waitForNavigation({ waitUntil: 'networkidle' });
+    await page.click('input[name="BUTTON1"]');
 
-    /* 4. Ir a “Agendar Clase” */
+    /* 4 · esperamos a que aparezca “Agendar Clase” (no navegación) */
+    await page.waitForSelector('text=Agendar Clase');
+
+    /* 5 · Ir a Agendar Clase */
     await page.click('text=Agendar Clase');
-    await page.waitForLoadState('networkidle');
+    await page.waitForSelector('text=Confirmar');
 
-    /* 5. Screenshot antes */
-    const stamp = dayjs().format('YYYY-MM-DD_HH-mm-ss');
-    const pre   = `before_${stamp}.png`;
-    await page.screenshot({ path: pre, fullPage: true });
+    const ts      = dayjs().format('YYYY-MM-DD_HH-mm-ss');
+    const before  = `before_${ts}.png`;
+    await page.screenshot({ path: before, fullPage:true });
 
-    /* 6. Confirmar reserva */
+    /* 6 · Confirmar reserva */
     await page.click('text=Confirmar');
-    await page.waitForLoadState('networkidle');
+    await page.waitForSelector('text=Clase agendada',{ timeout:30000 }).catch(()=>{});
 
-    /* 7. Screenshot después */
-    const post  = `after_${stamp}.png`;
-    await page.screenshot({ path: post, fullPage: true });
+    const after = `after_${ts}.png`;
+    await page.screenshot({ path: after, fullPage:true });
 
-    /* 8. Enviar a Discord */
+    /* 7 · Discord OK */
     const ok = new MessageBuilder()
       .setTitle('✅ Clase agendada')
-      .setDescription(`Capturas generadas el ${dayjs().format('DD/MM/YYYY HH:mm')}`)
+      .setDescription(`Capturas ${dayjs().format('DD/MM/YYYY HH:mm')}`)
       .setColor('#00ff00');
 
     await hook.send(ok);
-    await hook.sendFile(pre);
-    await hook.sendFile(post);
+    await hook.sendFile(before);
+    await hook.sendFile(after);
 
-    console.log('✅  Flujo completado sin errores');
+    console.log('✅ Flujo completado sin errores');
   } catch (err) {
     console.error(err);
-
-    const fail = new MessageBuilder()
-      .setTitle('❌ Error en el bot')
-      .setDescription(err.message)
-      .setColor('#ff0000');
-
-    await hook.send(fail);
+    await reportCrash(err);
     process.exit(1);
   } finally {
     await browser.close();
