@@ -1,107 +1,102 @@
 /*  Auto‑Class Bot – cierra modal, entra a Programación,
-    agenda DOS clases (18 h y 19 h 30) y envía capturas a Discord  */
+    agenda DOS clases (18 h y 19 h 30) y envía capturas a Discord  */
 
 const { chromium }               = require("playwright");
 const { Webhook, MessageBuilder } = require("discord-webhook-node");
 const dayjs                       = require("dayjs");
 
-/* ───────────────────────── CONFIG ───────────────────────── */
+/* ─────────────── CONFIGURACIÓN ─────────────── */
 
 const { USER_ID, USER_PASS, WEBHOOK_URL } = process.env;
 if (!USER_ID || !USER_PASS || !WEBHOOK_URL) {
   console.error("❌  Faltan USER_ID, USER_PASS o WEBHOOK_URL"); process.exit(1);
 }
 
-const PLAN_TEXT      = /ING-B1, B2 Y C1 PLAN 582H/i;      // texto exacto del plan
-const SEDE_TEXT      = "CENTRO MAYOR";                    // sede a elegir
-const HORAS_A_TOMAR  = ["18:00", "19:30"];                // horarios en orden
+const PLAN_TEXT     = /ING-B1, B2 Y C1 PLAN 582H/i;   // texto del plan
+const SEDE_TEXT     = "CENTRO MAYOR";                 // sede
+const HORARIOS      = ["18:00", "19:30"];             // turnos a tomar
 
-/* ──────────────────────── Discord hook ───────────────────── */
+/* ─────────────── Discord helper ─────────────── */
 
 const hook = new Webhook(WEBHOOK_URL);
-async function sendDiscord(title, color, ...files) {
-  const card = new MessageBuilder()
-    .setTitle(title)
-    .setColor(color)
-    .setTimestamp();
-  await hook.send(card).catch(()=>{});
+async function notify(title, color, ...files) {
+  await hook.send(
+    new MessageBuilder()
+      .setTitle(title)
+      .setColor(color)
+      .setTimestamp()
+  ).catch(()=>{});
   for (const f of files) await hook.sendFile(f).catch(()=>{});
 }
 
-/* ────────────────────────── Helpers ──────────────────────── */
+/* ───────────────── Helpers ──────────────────── */
 
-async function forceCloseModal(page) {
-  // 1) botón “X” del popup
-  const cls = page.locator('#gxp0_cls');
-  if (await cls.isVisible().catch(()=>false)) return cls.click();
-  // 2) Emergente genérico
-  await page.evaluate(() => {
+async function cerrarModal(page){
+  const xBtn = page.locator("#gxp0_cls");
+  if (await xBtn.isVisible().catch(()=>false)) return xBtn.click();
+  await page.evaluate(()=>{
     document.querySelectorAll('div[id^="gxp"][class*="popup"]')
-            .forEach(e => e.style.display = "none");
+            .forEach(el=>el.style.display="none");
   });
 }
+const stamp = n => `${n}_${dayjs().format("YYYY-MM-DD_HH-mm-ss")}.png`;
 
-function stamp(name){ return `${name}_${dayjs().format("YYYY-MM-DD_HH-mm-ss")}.png`; }
-
-/* ────────────────────────── FLUJO ───────────────────────── */
+/* ──────────────── FLUJO PRINCIPAL ───────────── */
 
 (async () => {
   const browser = await chromium.launch({ headless:true });
-  const ctx     = await browser.newContext({ viewport:{ width:1280,height:720 } });
+  const ctx     = await browser.newContext({ viewport:{width:1280,height:720} });
   const page    = await ctx.newPage();
   page.setDefaultTimeout(90_000);
 
   try {
-    /* 1. Login ------------------------------------------------*/
+    /* 1. Login */
     await page.goto("https://schoolpack.smart.edu.co/idiomas/alumnos.aspx",
                     { waitUntil:"domcontentloaded" });
     await page.fill('input[name="vUSUCOD"]', USER_ID);
     await page.fill('input[name="vPASS"]',   USER_PASS);
     await page.click('input[name="BUTTON1"]');
 
-    /* 2. Cerrar modal si aparece -----------------------------*/
-    await page.waitForTimeout(1000);
-    await forceCloseModal(page);
+    /* 2. Modal */
+    await page.waitForTimeout(1_000);
+    await cerrarModal(page);
 
-    /* 3. Menú principal y Programación -----------------------*/
+    /* 3. Menú principal → Programación */
     await page.waitForSelector('img[src*="PROGRAMACION"], img[alt="Matriculas"]');
     await page.locator('img[src*="PROGRAMACION"], img[alt="Matriculas"]').first().click();
     await page.waitForLoadState("networkidle");
 
-    /* 4. Seleccionar plan y pulsar “Iniciar” -----------------*/
-    const rowPlan = page.locator(`text=${PLAN_TEXT}`).first();
-    await rowPlan.click();                                    // clic en la fila
-    await page.click('text=Iniciar');                         // botón Iniciar
+    /* 4. Seleccionar plan y “Iniciar” */
+    await page.locator(`text=${PLAN_TEXT}`).first().click();
+    await page.click('text=Iniciar');
     await page.waitForLoadState("networkidle");
 
-    /* 5. Filtro “Pendientes por programar” -------------------*/
-    await page.selectOption('select[name="VTAPROBO"]',
-                            { label: /Pendientes.*programar/i });
+    /* 5. Filtrar “Pendientes por programar” (valor exacto del <option>) */
+    await page.selectOption('select[name="VTAPROBO"]', { value:"P" }); // ← cambia “P” si tu opción usa otro value
     await page.waitForLoadState("networkidle");
 
-    /* 6. Captura listado inicial -----------------------------*/
+    /* 6. Captura listado */
     const listPNG = stamp("list");
     await page.screenshot({ path:listPNG, fullPage:true });
 
-    /* 7. Loop para los dos horarios solicitados -------------*/
-    for (const hora of HORAS_A_TOMAR) {
-      /* 7‑a  Seleccionar la primera fila pendiente */
-      const filasPend = page.locator('input[type="checkbox"][name="vCHECK"]').filter({ hasNot: page.locator('[disabled]')});
-      if (!await filasPend.count()) throw new Error("No hay filas pendientes.");
-      await filasPend.first().check();
+    /* 7. Bucle de horarios */
+    for (const hora of HORARIOS){
 
-      /* 7‑b  “Asignar” */
+      /* 7‑a  marcar primera fila pendiente */
+      const fila = page.locator('input[type="checkbox"][name="vCHECK"]').first();
+      if (!await fila.count()) throw new Error("No hay filas pendientes.");
+      await fila.check();
+
+      /* 7‑b  Asignar */
       await page.click('text=Asignar');
       await page.waitForLoadState("networkidle");
 
       /* 7‑c  Sede */
       await page.selectOption('select[name="VTSEDE"]', { label: SEDE_TEXT });
 
-      /* 7‑d  Día: segunda opción (index 1) */
-      const opcionesDia = await page.$$('select[name="VFDIA"] option:not([disabled])');
-      if (opcionesDia.length < 2) throw new Error("La lista de días solo tiene una opción.");
-      const valueDia = await opcionesDia[1].getAttribute("value");
-      await page.selectOption('select[name="VFDIA"]', valueDia);
+      /* 7‑d  Día (segunda opción) */
+      const diaValue = await page.locator('select[name="VFDIA"] option:not([disabled])').nth(1).getAttribute("value");
+      await page.selectOption('select[name="VFDIA"]', diaValue);
 
       /* 7‑e  Hora */
       await page.selectOption('select[name="VFHORA"]', { label: hora });
@@ -111,19 +106,17 @@ function stamp(name){ return `${name}_${dayjs().format("YYYY-MM-DD_HH-mm-ss")}.p
       await page.waitForLoadState("networkidle");
     }
 
-    /* 8. Captura final y notificación ------------------------*/
-    const okPNG = stamp("after");
-    await page.screenshot({ path:okPNG, fullPage:true });
-    await sendDiscord("✅ Clase(s) agendada(s)", "#00ff00", listPNG, okPNG);
-
+    /* 8. Captura final & OK */
+    const donePNG = stamp("after");
+    await page.screenshot({ path:donePNG, fullPage:true });
+    await notify("✅ Clases agendadas", "#00ff00", listPNG, donePNG);
     console.log("✅ Flujo completado");
+
   } catch (err) {
     console.error(err);
     const crashPNG = stamp("crash");
     await page.screenshot({ path:crashPNG, fullPage:true }).catch(()=>{});
-    await sendDiscord("❌ Crash", "#ff0000", crashPNG);
+    await notify("❌ Crash", "#ff0000", crashPNG);
     process.exit(1);
-  } finally {
-    await browser.close();
-  }
+  } finally { await browser.close(); }
 })();
