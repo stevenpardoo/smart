@@ -34,21 +34,18 @@ const stamp = (name) => `${name}_${dayjs().format("YYYY-MM-DD_HH-mm-ss")}.png`;
 async function cerrarModalInfo(page) {
   console.log("🔍 Buscando modal de 'Información' para cerrar...");
   try {
-    // Esperar a que el contenedor del modal sea visible
     const modalContainer = page.locator('div[id^="gxp"][class*="gx-popup-default"]');
-    await modalContainer.waitFor({ state: 'visible', timeout: 10000 }); // Espera hasta 10s
+    await modalContainer.waitFor({ state: 'visible', timeout: 10000 });
 
-    // Intentar cerrar con el botón X
-    const xBtn = page.locator('#gxp0_cls'); // ID típico del botón X
+    const xBtn = page.locator('#gxp0_cls');
     if (await xBtn.isVisible({ timeout: 2000 }).catch(() => false)) {
       console.log("Intentando cerrar modal con botón X...");
-      await xBtn.click({ force: true, timeout: 5000 }); // force:true por si está parcialmente oculto
-      await modalContainer.waitFor({ state: 'hidden', timeout: 5000 }); // Esperar a que se oculte
+      await xBtn.click({ force: true, timeout: 5000 });
+      await modalContainer.waitFor({ state: 'hidden', timeout: 5000 });
       console.log("🗙 Modal de 'Información' cerrado con botón X.");
       return;
     }
 
-    // Si el botón X no funcionó o no se encontró, intentar ocultar por JS
     console.log("Botón X no funcionó o no encontrado, intentando ocultar modal por JS...");
     await page.evaluate(() => {
       const modals = document.querySelectorAll('div[id^="gxp"][class*="gx-popup-default"]');
@@ -58,7 +55,7 @@ async function cerrarModalInfo(page) {
     console.log("🗙 Modal de 'Información' ocultado por JS.");
 
   } catch (e) {
-    console.log("ℹ️ Modal de 'Información' no detectado o ya estaba cerrado:", e.message);
+    console.log("ℹ️ Modal de 'Información' no detectado o ya estaba cerrado.");
   }
 }
 
@@ -66,19 +63,17 @@ async function getPopupWindowContext(page, selectorDelPopup, timeout = 20000) {
   console.log(`🔍 Buscando contexto del popup con selector: ${selectorDelPopup}`);
   const deadline = Date.now() + timeout;
   while (Date.now() < deadline) {
-    // Revisar la página principal
     if (await page.locator(selectorDelPopup).isVisible({ timeout: 500 }).catch(() => false)) {
       console.log("✅ Selector encontrado en la página principal.");
       return page;
     }
-    // Revisar iframes
     for (const frame of page.frames()) {
       if (await frame.locator(selectorDelPopup).isVisible({ timeout: 500 }).catch(() => false)) {
         console.log("✅ Selector encontrado en un iframe.");
         return frame;
       }
     }
-    await page.waitForTimeout(500); // Esperar un poco antes de reintentar
+    await page.waitForTimeout(500);
   }
   throw new Error(`No se encontró el contexto del popup con selector "${selectorDelPopup}" después de ${timeout / 1000}s`);
 }
@@ -89,7 +84,7 @@ async function getPopupWindowContext(page, selectorDelPopup, timeout = 20000) {
   const browser = await chromium.launch({ headless: true });
   const ctx = await browser.newContext({ viewport: { width: 1280, height: 720 } });
   const page = await ctx.newPage();
-  page.setDefaultTimeout(90000); // Timeout global generoso
+  page.setDefaultTimeout(90000);
 
   try {
     /* 1. LOGIN */
@@ -102,7 +97,7 @@ async function getPopupWindowContext(page, selectorDelPopup, timeout = 20000) {
     await page.fill('input[name="vPASS"]', USER_PASS);
     console.log("Credenciales rellenadas. Haciendo clic en 'Confirmar'...");
     await Promise.all([
-        page.waitForLoadState("networkidle", { timeout: 30000 }), // Esperar a que la red se calme después del clic
+        page.waitForLoadState("networkidle", { timeout: 30000 }),
         page.click('input[name="BUTTON1"]')
     ]);
     console.log("Login realizado. Esperando posible modal de 'Información'...");
@@ -127,21 +122,23 @@ async function getPopupWindowContext(page, selectorDelPopup, timeout = 20000) {
     await rowPlan.click();
     console.log("Haciendo clic en 'Iniciar'...");
     await page.click("text=Iniciar");
-    await page.waitForLoadState("networkidle", { timeout: 30000 });
-    console.log("Popup 'Programar clases' debería estar cargando.");
+    // En lugar de networkidle, esperamos que el popup de "Programar clases" esté listo
+    await page.waitForSelector('iframe[id^="gxp"]', { state: 'attached', timeout: 20000 }); // Esperar que el iframe del popup exista
+    console.log("Popup 'Programar clases' (iframe) detectado.");
 
     /* 5. OBTENER CONTEXTO DEL POPUP "PROGRAMAR CLASES" (CON O SIN IFRAME) */
-    // Usamos un selector que sabemos que está dentro de este popup específico
     const pop = await getPopupWindowContext(page, 'select[name$="APROBO"]');
     console.log("✅ Contexto del popup 'Programar clases' obtenido.");
 
     /* 6. FILTRO “Pendientes por programar” */
     console.log("🔍 Aplicando filtro 'Pendientes por programar'...");
-    const selectEstado = pop.locator('select[name$="APROBO"]'); // Selector que termina en APROBO
+    const selectEstado = pop.locator('select[name$="APROBO"]');
     await selectEstado.waitFor({ state: 'visible', timeout: 10000 });
     await selectEstado.selectOption(ESTADO_VAL);
-    await page.waitForLoadState("networkidle", { timeout: 20000 }); // Esperar a que el filtro aplique
-    console.log("Filtro aplicado.");
+    // Después de cambiar el select, la tabla de clases debería actualizarse.
+    // Esperamos a que el primer checkbox de la tabla sea visible como señal.
+    await pop.locator('input[type=checkbox][name="vCHECK"]:not([disabled])').first().waitFor({ state: 'visible', timeout: 20000 });
+    console.log("Filtro aplicado y tabla de clases actualizada.");
 
     /* 7. CAPTURA LISTADO INICIAL */
     const listPNG = stamp("list");
@@ -156,7 +153,10 @@ async function getPopupWindowContext(page, selectorDelPopup, timeout = 20000) {
       console.log("🔍 Buscando primera fila pendiente...");
       const filaCheckbox = pop.locator('input[type=checkbox][name="vCHECK"]:not([disabled])').first();
       if (!await filaCheckbox.count()) {
-        await sendToDiscord(`⚠️ No hay filas pendientes para ${hora}`, "#ffa500", listPNG);
+        // Tomar screenshot antes de lanzar el error si no hay filas
+        const noFilasPNG = stamp(`no_filas_${hora.replace(":", "")}`);
+        await page.screenshot({ path: noFilasPNG, fullPage: true });
+        await sendToDiscord(`⚠️ No hay filas pendientes para ${hora}`, "#ffa500", listPNG, noFilasPNG);
         throw new Error(`No quedan filas pendientes para agendar la hora ${hora}.`);
       }
       await filaCheckbox.scrollIntoViewIfNeeded();
@@ -166,45 +166,68 @@ async function getPopupWindowContext(page, selectorDelPopup, timeout = 20000) {
       /* 8-b "Asignar" */
       console.log("Haciendo clic en 'Asignar'...");
       await pop.click("text=Asignar");
-      // Esperar a que aparezca el popup de selección de sede/día/hora
-      await pop.locator('select[name="VTSEDE"]').waitFor({ state: 'visible', timeout: 15000 });
-      console.log("Popup de asignación abierto.");
+      // El clic en "Asignar" abre OTRO popup o actualiza el contenido.
+      // Necesitamos esperar el combo de Sede dentro de este nuevo contexto/popup.
+      // Como no sabemos si es un nuevo iframe o el mismo, volvemos a buscar el contexto.
+      const popAsignar = await getPopupWindowContext(page, 'select[name="VTSEDE"]', 15000);
+      console.log("Popup de asignación abierto (o contexto encontrado).");
+
 
       /* 8-c Sede */
       console.log("🔍 Seleccionando sede:", SEDE_TEXT);
-      await pop.selectOption('select[name="VTSEDE"]', { label: SEDE_TEXT });
+      await popAsignar.selectOption('select[name="VTSEDE"]', { label: SEDE_TEXT });
+      await page.waitForTimeout(1000); // Pequeña pausa para que cargue el siguiente combo si depende de la sede
 
       /* 8-d Día: segunda opción de la lista habilitada */
       console.log("🔍 Seleccionando día (segunda opción disponible)...");
-      const diaOptions = pop.locator('select[name="VFDIA"] option:not([disabled])');
+      const selectDia = popAsignar.locator('select[name="VFDIA"]');
+      await selectDia.waitFor({ state: 'visible', timeout: 10000 }); // Asegurar que el combo de día esté visible
+      const diaOptions = selectDia.locator('option:not([disabled])');
       if (await diaOptions.count() < 2) {
         throw new Error("No hay al menos dos días disponibles para seleccionar.");
       }
       const diaValue = await diaOptions.nth(1).getAttribute("value");
-      await pop.selectOption('select[name="VFDIA"]', diaValue);
+      await selectDia.selectOption(diaValue);
       console.log("Día seleccionado.");
+      await page.waitForTimeout(1000); // Pausa para que cargue el combo de hora
 
       /* 8-e Hora */
       console.log("🔍 Seleccionando hora:", hora);
-      await pop.selectOption('select[name="VFHORA"]', { label: hora });
+      const selectHora = popAsignar.locator('select[name="VFHORA"]');
+      await selectHora.waitFor({ state: 'visible', timeout: 10000 });
+      await selectHora.selectOption({ label: hora });
       console.log("Hora seleccionada.");
 
       /* 8-f Confirmar */
       console.log("Haciendo clic en 'Confirmar'...");
-      await pop.click("text=Confirmar");
-      await page.waitForLoadState("networkidle", { timeout: 30000 }); // Esperar a que se procese la confirmación
+      // El botón confirmar podría estar en el contexto 'popAsignar' o 'pop' o 'page'
+      // Intentamos en el contexto más específico primero
+      let btnConfirmar;
+      if (await popAsignar.locator("text=Confirmar").isVisible({timeout:1000}).catch(()=>false)) {
+          btnConfirmar = popAsignar.locator("text=Confirmar");
+      } else if (await pop.locator("text=Confirmar").isVisible({timeout:1000}).catch(()=>false)) {
+          btnConfirmar = pop.locator("text=Confirmar");
+      } else {
+          btnConfirmar = page.locator("text=Confirmar");
+      }
+      await btnConfirmar.click();
+      // Después de confirmar, la página principal (o el popup 'pop') debería actualizarse.
+      // No usamos networkidle aquí, sino que esperamos que la tabla de pendientes se refresque
+      // o que aparezca un mensaje de éxito (si lo hay).
+      // Por ahora, una pausa fija es más segura para GeneXus.
+      await page.waitForTimeout(5000); // Ajusta esta pausa según sea necesario
       console.log(`✅ Clase para las ${hora} agendada (o intento realizado).`);
 
-      // Pequeña pausa antes de la siguiente iteración si es necesario,
-      // para que la tabla de "pendientes" se refresque.
       if (HORARIOS.indexOf(hora) < HORARIOS.length - 1) {
-          await page.waitForTimeout(2000); 
-          // Puede que necesites volver a filtrar "Pendientes por programar" aquí
-          // si la página se resetea completamente
+          console.log("Preparando para la siguiente clase...");
+          // Volver a filtrar "Pendientes por programar" si la interfaz se resetea
           const selectEstadoRefresh = pop.locator('select[name$="APROBO"]');
           if (await selectEstadoRefresh.isVisible({timeout: 3000}).catch(()=>false)){
              await selectEstadoRefresh.selectOption(ESTADO_VAL);
-             await page.waitForLoadState("networkidle", { timeout: 10000 });
+             await pop.locator('input[type=checkbox][name="vCHECK"]:not([disabled])').first().waitFor({ state: 'visible', timeout: 10000 });
+             console.log("Filtro de pendientes refrescado.");
+          } else {
+              console.log("No se pudo encontrar el filtro de estado para refrescar, continuando...");
           }
       }
     }
@@ -228,4 +251,3 @@ async function getPopupWindowContext(page, selectorDelPopup, timeout = 20000) {
     }
   }
 })();
-
