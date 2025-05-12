@@ -139,6 +139,3 @@ async function contextoPopup(page, timeout = 15_000) {
     await browser.close();
   }
 })();
-
-
- Steven PardoProduct Owner | Scrum MasterProduct & TechnologyColombia +57 318 375 2155 nsteven1993@gmail.com
