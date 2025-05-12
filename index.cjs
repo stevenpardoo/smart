@@ -12,8 +12,8 @@ if (!USER_ID || !USER_PASS || !WEBHOOK_URL) {
 /* ─── PARÁMETROS DEL FLUJO ─────────────────────────────────────── */
 const PLAN_TXT   = /ING-B1, B2 Y C1 PLAN 582H/i;
 const SEDE_TXT   = 'CENTRO MAYOR';
-const HORARIOS   = ['18:00', '19:30'];          // orden en que se toman
-const ESTADO_VAL = '2';                         // value de “Pendientes…”
+const HORARIOS   = ['18:00', '19:30'];           // orden en que se toman
+const ESTADO_VAL = '2';                          // value de “Pendientes…”
 
 /* ─── Discord helper ───────────────────────────────────────────── */
 const hook = new Webhook(WEBHOOK_URL);
@@ -49,17 +49,12 @@ async function contextoPopup(page, timeout = 15_000) {
   throw new Error('No apareció select[name$="APROBO"]');
 }
 
-/* Selecciona la primera fila realmente pendiente (checkbox o clic sobre fila) */
-async function seleccionarPrimeraFila(pop) {
-  /* 1️⃣ Intenta con el checkbox habilitado */
-  const cb = pop.locator('input[type=checkbox][name="vCHECK"]:not([disabled])').first();
-  if (await cb.count()) { await cb.check(); return true; }
-
-  /* 2️⃣ Algunos planes no usan checkbox: la fila se selecciona con un clic */
-  const fila = pop.locator('tr:has(td:text("Pendiente"))').first();
-  if (await fila.count()) { await fila.click(); return true; }
-
-  return false;   // no hay filas
+/* Selecciona la primera fila con estado Pendiente (sin checkbox) */
+async function seleccionarFilaPendiente(pop) {
+  const fila = pop.locator('tr', { hasText: 'Pendiente' }).first();
+  if (!(await fila.count())) return false;
+  await fila.click();                // resalta la fila
+  return true;
 }
 
 /* ─── FLUJO PRINCIPAL ──────────────────────────────────────────── */
@@ -106,8 +101,8 @@ async function seleccionarPrimeraFila(pop) {
     const listPNG = stamp('list');
     await page.screenshot({ path: listPNG, fullPage: true });
 
-    /* 8. Verifica si hay alguna fila pendiente */
-    if (!(await seleccionarPrimeraFila(pop))) {
+    /* 8. Verifica disponibilidad inicial */
+    if (!(await seleccionarFilaPendiente(pop))) {
       await discord('Sin disponibilidad ❕', '#ffaa00', listPNG);
       console.log('Sin filas pendientes. Termina limpio.');
       process.exit(0);
@@ -117,9 +112,9 @@ async function seleccionarPrimeraFila(pop) {
     for (const hora of HORARIOS) {
       await pop.evaluate(() => (document.querySelector('body').scrollTop = 0));
 
-      if (!(await seleccionarPrimeraFila(pop))) break;
+      if (!(await seleccionarFilaPendiente(pop))) break;
 
-      await pop.click('text=Asignar');
+      await pop.locator('input[value="Asignar"]').click();
       await pop.locator('select[name="VTSEDE"]').waitFor();
 
       await pop.selectOption('select[name="VTSEDE"]', { label: SEDE_TXT });
