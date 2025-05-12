@@ -25,7 +25,7 @@ async function discord(title, color, ...files) {
 }
 
 /* ─── Utils ─────────────────────────────────────────────────────── */
-const stamp = (base) => `${base}_${dayjs().format('YYYY-MM-DD_HH-mm-ss')}.png`;
+const stamp = (b) => `${b}_${dayjs().format('YYYY-MM-DD_HH-mm-ss')}.png`;
 
 async function cerrarModal(page) {
   const x = page.locator('#gxp0_cls');
@@ -81,13 +81,13 @@ async function contextoPopup(page, timeout = 15_000) {
     await page.click('text=Iniciar');
     await page.waitForLoadState('networkidle');
 
-    /* 5. CONTEXTO DEL POPUP (con o sin iframe) */
+    /* 5. CONTEXTO DEL POPUP */
     let pop = await contextoPopup(page);
 
     /* 6. FILTRO “Pendientes por programar” */
     await pop.selectOption('select[name$="APROBO"]', ESTADO_VAL);
-    await page.waitForTimeout(1000);          // post‑back
-    pop = await contextoPopup(page);          // re‑obtener contexto válido
+    await page.waitForTimeout(800);          // post‑back
+    pop = await contextoPopup(page);         // nuevo contexto válido
 
     /* 7. screenshot del listado inicial */
     const listPNG = stamp('list');
@@ -95,34 +95,25 @@ async function contextoPopup(page, timeout = 15_000) {
 
     /* 8. BUCLE DE HORARIOS */
     for (const hora of HORARIOS) {
-      /* –– scroll hasta arriba por si el checkbox quedó fuera de vista */
       await pop.evaluate(() => (document.querySelector('body').scrollTop = 0));
 
-      /* 8‑a marcar primera fila pendiente HABILITADA */
       const fila = pop
         .locator('input[type=checkbox][name="vCHECK"]:not([disabled])')
         .first();
       if (!await fila.count()) throw new Error('No quedan filas pendientes.');
       await fila.check();
 
-      /* 8‑b Asignar */
       await pop.click('text=Asignar');
       await pop.locator('select[name="VTSEDE"]').waitFor();
 
-      /* 8‑c Sede */
       await pop.selectOption('select[name="VTSEDE"]', { label: SEDE_TXT });
-
-      /* 8‑d Día: segunda opción de la lista habilitada */
       const dOpt = pop
         .locator('select[name="VFDIA"] option:not([disabled])')
         .nth(1);
       const dVal = await dOpt.getAttribute('value');
       await pop.selectOption('select[name="VFDIA"]', dVal);
-
-      /* 8‑e Hora */
       await pop.selectOption('select[name="VFHORA"]', { label: hora });
 
-      /* 8‑f Confirmar */
       await pop.click('text=Confirmar');
       await page.waitForLoadState('networkidle');
     }
