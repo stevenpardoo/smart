@@ -49,26 +49,12 @@ async function contextoPopup(page, timeout = 15_000) {
   throw new Error('No apareció select[name$="APROBO"]');
 }
 
-/* Devuelve true cuando entra a la pantalla de asignación */
-async function abrirFilaValida(pop) {
-  const filas = pop.locator('tr', { hasText: 'Pendiente' });
-  const total = await filas.count();
-  for (let i = 0; i < total; i++) {
-    await pop.evaluate(() => (document.querySelector('body').scrollTop = 0));
-    const fila = filas.nth(i);
-    await fila.click();
-    await pop.locator('input[value="Asignar"]').click();
-
-    try {
-      await pop.locator('select[name="VTSEDE"]').waitFor({ timeout: 2000 });
-      return true;                           // se abrió formulario
-    } catch {
-      // clase bloqueada → regresar y seguir con la siguiente
-      await pop.locator('input[value="Regresar"]').click().catch(() => {});
-      await pop.waitForTimeout(500);
-    }
-  }
-  return false;                              // ninguna sirvió
+/* Selecciona y marca el checkbox de la PRIMERA fila pendiente */
+async function seleccionarPrimeraFila(pop) {
+  const cb = pop.locator('input[type="checkbox"]:not([disabled])').first();
+  if (!(await cb.count())) return false;
+  await cb.check({ force: true });
+  return true;
 }
 
 /* ─── FLUJO PRINCIPAL ──────────────────────────────────────────── */
@@ -97,24 +83,29 @@ async function abrirFilaValida(pop) {
     await page.click('text=Iniciar');
     await page.waitForLoadState('networkidle');
 
-    /* 5. POPUP + filtro Pendiente */
+    /* 5. POPUP */
     let pop = await contextoPopup(page);
+
+    /* 6. Estado Pendiente */
     await pop.selectOption('select[name$="APROBO"]', ESTADO_VAL);
-    await page.waitForTimeout(800);
+    await page.waitForTimeout(800);           // post‑back
     pop = await contextoPopup(page);
 
-    /* 6. Screenshot listado inicial */
+    /* 7. Screenshot de la lista */
     const listPNG = stamp('list');
     await page.screenshot({ path: listPNG, fullPage: true });
 
-    /* 7. Abre primera clase disponible */
-    if (!(await abrirFilaValida(pop))) {
+    /* 8. Seleccionar PRIMERA fila disponible */
+    if (!(await seleccionarPrimeraFila(pop))) {
       await discord('Sin disponibilidad ❕', '#ffaa00', listPNG);
-      console.log('Sin clases asignables. Termina limpio.');
+      console.log('Sin filas pendientes. Termina limpio.');
       process.exit(0);
     }
 
-    /* 8. Asigna los horarios */
+    /* 9. Asignar esa única fila con ambos horarios */
+    await pop.locator('input[value="Asignar"]').click();
+    await pop.locator('select[name="VTSEDE"]').waitFor();
+
     for (const hora of HORARIOS) {
       await pop.selectOption('select[name="VTSEDE"]', { label: SEDE_TXT });
       const dOpt = pop.locator('select[name="VFDIA"] option:not([disabled])').nth(1);
@@ -125,14 +116,13 @@ async function abrirFilaValida(pop) {
       await page.waitForLoadState('networkidle');
       console.log(`✅  Clase asignada ${hora}`);
 
-      // Si falta otro horario, vuelve a la lista y abre la siguiente fila válida
+      // después de la primera confirmación, vuelve automáticamente a la misma ficha
       if (hora !== HORARIOS[HORARIOS.length - 1]) {
-        pop = await contextoPopup(page);
-        if (!(await abrirFilaValida(pop))) break;
+        await pop.locator('input[value="Asignar"]').waitFor();
       }
     }
 
-    /* 9. OK final */
+    /* 10. OK final */
     const okPNG = stamp('after');
     await page.screenshot({ path: okPNG, fullPage: true });
     await discord('Clases agendadas ✅', '#00ff00', listPNG, okPNG);
