@@ -1,96 +1,134 @@
-/*  Auto‑Class Bot – agenda 18 h y 19 h 30  */
+/*  Auto‑Class Bot – agenda 18 h y 19 h 30 y manda capturas a Discord  */
 const { chromium }               = require("playwright");
 const { Webhook, MessageBuilder } = require("discord-webhook-node");
-const dayjs = require("dayjs");
+const dayjs                       = require("dayjs");
 
+/* ─── ENV ───────────────────────────────────────────────────────── */
 const { USER_ID, USER_PASS, WEBHOOK_URL } = process.env;
-if(!USER_ID||!USER_PASS||!WEBHOOK_URL){
+if (!USER_ID || !USER_PASS || !WEBHOOK_URL) {
   console.error("❌  Faltan USER_ID, USER_PASS o WEBHOOK_URL"); process.exit(1);
 }
 
-const PLAN_TXT=/ING-B1, B2 Y C1 PLAN 582H/i;
-const SEDE_TXT="CENTRO MAYOR";
-const HORAS=["18:00","19:30"];
+/* ─── PARÁMETROS DEL FLUJO ─────────────────────────────────────── */
+const PLAN_TXT   = /ING-B1, B2 Y C1 PLAN 582H/i;
+const SEDE_TXT   = "CENTRO MAYOR";
+const HORARIOS   = ["18:00", "19:30"];          // orden en que se toman
+const ESTADO_VAL = "2";                         // value de “Pendientes…”
 
-const hook=new Webhook(WEBHOOK_URL);
-const notify=(t,c,...f)=>hook.send(new MessageBuilder().setTitle(t).setColor(c).setTimestamp())
-                           .then(()=>Promise.all(f.map(x=>hook.sendFile(x).catch(()=>{}))))
-                           .catch(()=>{});
-const snap=n=>`${n}_${dayjs().format("YYYY-MM-DD_HH-mm-ss")}.png`;
-
-async function closeModal(p){
-  await p.locator('#gxp0_cls, div[id^="gxp"][class*="popup"]').evaluateAll(
-        els=>els.forEach(e=>e.style.display='none')).catch(()=>{});
+/* ─── Discord helper ───────────────────────────────────────────── */
+const hook = new Webhook(WEBHOOK_URL);
+async function discord(title, color, ...files) {
+  await hook.send(
+    new MessageBuilder().setTitle(title).setColor(color).setTimestamp()
+  ).catch(()=>{});
+  for (const f of files) await hook.sendFile(f).catch(()=>{});
 }
 
+/* ─── Utils ─────────────────────────────────────────────────────── */
+const stamp = (base)=>`${base}_${dayjs().format("YYYY-MM-DD_HH-mm-ss")}.png`;
+
+async function cerrarModal(page){
+  const x = page.locator("#gxp0_cls");
+  if (await x.isVisible().catch(()=>false)) return x.click();
+  await page.evaluate(()=>{
+    document.querySelectorAll('div[id^="gxp"][class*="popup"]')
+            .forEach(e=>e.style.display="none");
+  });
+}
+
+async function contextoPopup(page, timeout=15_000){
+  /* Devuelve el frame O el propio page donde viva el <select> de estados */
+  const deadline = Date.now()+timeout;
+  while (Date.now()<deadline){
+    for (const ctx of [page, ...page.frames()]){
+      const sel = ctx.locator('select[name*="APROBO"]');
+      if (await sel.count()) return ctx;
+    }
+    await page.waitForTimeout(300);
+  }
+  throw new Error('No apareció select[name*="APROBO"]');
+}
+
+/* ─── FLUJO PRINCIPAL ──────────────────────────────────────────── */
 (async()=>{
-  const br=await chromium.launch({ headless:true });
-  const pg=await (await br.newContext({ viewport:{width:1280,height:720} })).newPage();
-  pg.setDefaultTimeout(90_000);
+  const browser = await chromium.launch({ headless:true });
+  const ctx     = await browser.newContext({ viewport:{width:1280,height:720} });
+  const page    = await ctx.newPage();
+  page.setDefaultTimeout(90_000);
 
   try{
-    /* 1. Login ‑‑ espera al cambio de página */
-    await pg.goto("https://schoolpack.smart.edu.co/idiomas/alumnos.aspx",{waitUntil:"domcontentloaded"});
-    await pg.fill('input[name="vUSUCOD"]',USER_ID);
-    await pg.fill('input[name="vPASS"]',USER_PASS);
-    await Promise.all([
-      pg.waitForNavigation({ waitUntil:'domcontentloaded' }),
-      pg.click('input[name="BUTTON1"]')
-    ]);
+    /* 1. LOGIN */
+    await page.goto("https://schoolpack.smart.edu.co/idiomas/alumnos.aspx",
+                    {waitUntil:"domcontentloaded"});
+    await page.fill('input[name="vUSUCOD"]', USER_ID);
+    await page.fill('input[name="vPASS"]',   USER_PASS);
+    await page.click('input[name="BUTTON1"]');
 
-    /* 2. Modal  */
-    await pg.waitForSelector('div[id^="gxp"][class*="popup"]',{timeout:5_000}).catch(()=>{});
-    await closeModal(pg);
+    /* 2. MODAL */
+    await page.waitForTimeout(1000);
+    await cerrarModal(page);
 
-    /* 3. Menú principal → Programación */
-    await pg.waitForSelector('img[src*="PROGRAMACION"], img[alt="Matriculas"]');
-    await pg.locator('img[src*="PROGRAMACION"], img[alt="Matriculas"]').first().click();
-    await pg.waitForLoadState("networkidle");
+    /* 3. MENÚ → Programación */
+    await page.locator('img[src*="PROGRAMACION"], img[alt="Matriculas"]').first().click();
+    await page.waitForLoadState("networkidle");
 
-    /* 4. Plan */
-    await pg.locator(`text=${PLAN_TXT}`).first().click();
-    await pg.click("text=Iniciar");
-    await pg.waitForLoadState("networkidle");
+    /* 4. PLAN + Iniciar */
+    await page.locator(`text=${PLAN_TXT}`).first().click();
+    await page.click("text=Iniciar");
+    await page.waitForLoadState("networkidle");
 
-    /* 5. Popup / frame */
-    const popCtx = await (async ()=>{               // esperar label Estado…
-      for(let t=0;t<15;t++){
-        const ctx=[pg,...pg.frames()].find(f=>f.locator('text=/Estado de las clases/i').count());
-        if(ctx) return ctx;
-        await pg.waitForTimeout(500);
-      }
-      return pg;
-    })();
+    /* 5. CONTEXTO DEL POPUP (con o sin iframe) */
+    console.log("🔍 buscando popup…");
+    const pop = await contextoPopup(page);
 
-    /* 6. Filtro “Pendientes por programar” */
-    const estadoSel = popCtx.locator('select[name="VTAPROBO"]');
-    if(await estadoSel.count()) await estadoSel.selectOption("2").catch(()=>{});
+    /* 6. FILTRO “Pendientes por programar”                       */
+    await pop.selectOption('select[name*="APROBO"]', ESTADO_VAL);
 
-    const list=snap("list"); await pg.screenshot({path:list,fullPage:true});
+    /* 7. screenshot del listado inicial */
+    const listPNG = stamp("list");
+    await page.screenshot({path:listPNG, fullPage:true});
 
-    /* 7. Loop horarios (igual que antes) */
-    for(const hora of HORAS){
-      const fila=popCtx.locator('input[type=checkbox][name="vCHECK"]').first();
-      if(!await fila.count()) throw new Error("No hay pendientes");
-      await fila.evaluate(e=>e.scrollIntoView({block:"center"}));
+    /* 8. BUCLE DE HORARIOS */
+    for(const hora of HORARIOS){
+      /* –– scroll hasta arriba por si el checkbox quedó fuera de vista */
+      await pop.evaluate(()=>document.querySelector('body').scrollTop = 0);
+
+      /* 8‑a marcar primera fila pendiente */
+      const fila = pop.locator('input[type=checkbox][name="vCHECK"]').first();
+      if(!await fila.count()) throw new Error("No quedan filas pendientes.");
       await fila.check();
-      await popCtx.click("text=Asignar");
-      await popCtx.selectOption('select[name="VTSEDE"]',{label:SEDE_TXT});
-      const diaVal=await popCtx.locator('select[name="VFDIA"] option:not([disabled])').nth(1).getAttribute("value");
-      await popCtx.selectOption('select[name="VFDIA"]',diaVal);
-      await popCtx.selectOption('select[name="VFHORA"]',{label:hora});
-      await popCtx.click("text=Confirmar");
-      await pg.waitForLoadState("networkidle");
+
+      /* 8‑b Asignar */
+      await pop.click("text=Asignar");
+      await pop.locator('select[name="VTSEDE"]').waitFor();
+
+      /* 8‑c Sede */
+      await pop.selectOption('select[name="VTSEDE"]', {label:SEDE_TXT});
+
+      /* 8‑d Día: segunda opción de la lista habilitada            */
+      const dOpt = pop.locator('select[name="VFDIA"] option:not([disabled])').nth(1);
+      const dVal = await dOpt.getAttribute("value");
+      await pop.selectOption('select[name="VFDIA"]', dVal);
+
+      /* 8‑e Hora */
+      await pop.selectOption('select[name="VFHORA"]', {label:hora});
+
+      /* 8‑f Confirmar */
+      await pop.click("text=Confirmar");
+      await page.waitForLoadState("networkidle");
     }
 
-    const ok=snap("after"); await pg.screenshot({path:ok,fullPage:true});
-    await notify("✅ Clases agendadas","#00ff00",list,ok);
-    console.log("FIN OK");
+    /* 9. OK */
+    const okPNG = stamp("after");
+    await page.screenshot({path:okPNG, fullPage:true});
+    await discord("✅ Clases agendadas", "#00ff00", listPNG, okPNG);
+    console.log("✅ Flujo completado");
 
-  }catch(e){
-    console.error(e);
-    const crash=snap("crash"); await pg.screenshot({path:crash,fullPage:true}).catch(()=>{});
-    await notify("❌ Crash","#ff0000",crash);
+  }catch(err){
+    console.error(err);
+    const crash = stamp("crash");
+    await page.screenshot({path:crash, fullPage:true}).catch(()=>{});
+    await discord("❌ Crash", "#ff0000", crash);
     process.exit(1);
-  }finally{ await br.close(); }
+  }finally{ await browser.close(); }
 })();
