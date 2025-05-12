@@ -19,9 +19,9 @@ const ESTADO_VAL = '2';                          // value de “Pendientes…”
 /* ─── Discord helper ───────────────────────────────────────────── */
 const hook = new Webhook(WEBHOOK_URL);
 async function discord(title, color, ...files) {
-  await hook
-    .send(new MessageBuilder().setTitle(title).setColor(color).setTimestamp())
-    .catch(() => {});
+  await hook.send(
+    new MessageBuilder().setTitle(title).setColor(color).setTimestamp()
+  ).catch(() => {});
   for (const f of files) await hook.sendFile(f).catch(() => {});
 }
 
@@ -34,26 +34,27 @@ async function cerrarModal(page) {
   await page.evaluate(() => {
     document
       .querySelectorAll('div[id^="gxp"][class*="popup"]')
-      .forEach((e) => (e.style.display = 'none'));
+      .forEach(e => (e.style.display = 'none'));
   });
 }
 
-async function contextoPopup(page, timeout = 15_000) {
+async function contextoPopup(page, timeout = 15000) {
   const deadline = Date.now() + timeout;
   while (Date.now() < deadline) {
     for (const ctx of [page, ...page.frames()]) {
-      const sel = ctx.locator('select[name$="APROBO"]');
-      if (await sel.count()) return ctx;
+      if (await ctx.locator('select[name$="APROBO"]').count()) return ctx;
     }
     await page.waitForTimeout(300);
   }
   throw new Error('No apareció select[name$="APROBO"]');
 }
 
-/* ─── ÚNICO CAMBIO: seleccionar siempre el PRIMER checkbox ─────── */
+/* ─── CAMBIO CLAVE: seleccionar PRIMERA fila con “Pendiente” ──── */
 async function seleccionarFilaPendiente(pop) {
-  const chk = pop.locator('input[type="checkbox"][name="vCHECK"]').first();
-  if (!await chk.count()) return false;
+  // localiza la primera fila del tbody que tenga la celda Estado="Pendiente"
+  const row = pop.locator('table tbody tr:has(td:has-text("Pendiente"))').first();
+  if (!await row.count()) return false;
+  const chk = row.locator('input[type="checkbox"]');
   await chk.scrollIntoViewIfNeeded();
   await chk.check();
   return true;
@@ -62,13 +63,15 @@ async function seleccionarFilaPendiente(pop) {
 /* ─── FLUJO PRINCIPAL ──────────────────────────────────────────── */
 (async () => {
   const browser = await chromium.launch({ headless: true });
-  const ctx     = await browser.newContext({ viewport: { width: 1280, height: 720 } });
+  const ctx     = await browser.newContext({ viewport: { width:1280, height:720 } });
   const page    = await ctx.newPage();
-  page.setDefaultTimeout(90_000);
+  page.setDefaultTimeout(90000);
 
   try {
     /* 1. LOGIN */
-    await page.goto('https://schoolpack.smart.edu.co/idiomas/alumnos.aspx', { waitUntil: 'domcontentloaded' });
+    await page.goto('https://schoolpack.smart.edu.co/idiomas/alumnos.aspx', {
+      waitUntil: 'domcontentloaded'
+    });
     await page.fill('input[name="vUSUCOD"]', USER_ID);
     await page.fill('input[name="vPASS"]', USER_PASS);
     await page.click('input[name="BUTTON1"]');
@@ -80,8 +83,7 @@ async function seleccionarFilaPendiente(pop) {
     /* 3. MENÚ → Programación */
     await page
       .locator('img[src*="PROGRAMACION"], img[alt="Matriculas"]')
-      .first()
-      .click();
+      .first().click();
     await page.waitForLoadState('networkidle');
 
     /* 4. PLAN + Iniciar */
@@ -99,46 +101,45 @@ async function seleccionarFilaPendiente(pop) {
 
     /* 7. Captura listado inicial */
     const listPNG = stamp('list');
-    await page.screenshot({ path: listPNG, fullPage: true });
+    await page.screenshot({ path:listPNG, fullPage:true });
 
-    /* 8. Verifica disponibilidad inicial */
-    if (!(await seleccionarFilaPendiente(pop))) {
-      await discord('Sin disponibilidad ❕', '#ffaa00', listPNG);
+    /* 8. Marca la PRIMERA fila “Pendiente” */
+    if (!await seleccionarFilaPendiente(pop)) {
+      await discord('Sin disponibilidad ❕','#ffaa00',listPNG);
       console.log('Sin filas pendientes. Termina limpio.');
       process.exit(0);
     }
 
-    /* 9. Bucle por horarios */
+    /* 9. Bucle por cada horario */
     for (const hora of HORARIOS) {
-      await pop.evaluate(() => (document.querySelector('body').scrollTop = 0));
+      await pop.evaluate(() => document.querySelector('body').scrollTop = 0);
 
-      if (!(await seleccionarFilaPendiente(pop))) break;
+      // volver a seleccionar la misma PRIMERA fila
+      if (!await seleccionarFilaPendiente(pop)) break;
 
-      await pop.locator('input[value="Asignar"]').click();
+      await pop.click('text=Asignar');
       await pop.locator('select[name="VTSEDE"]').waitFor();
 
-      await pop.selectOption('select[name="VTSEDE"]', { label: SEDE_TXT });
-      const dOpt = pop
-        .locator('select[name="VFDIA"] option:not([disabled])')
-        .nth(1);
+      await pop.selectOption('select[name="VTSEDE"]',{ label: SEDE_TXT });
+      const dOpt = pop.locator('select[name="VFDIA"] option:not([disabled])').nth(1);
       await pop.selectOption('select[name="VFDIA"]', await dOpt.getAttribute('value'));
-      await pop.selectOption('select[name="VFHORA"]', { label: hora });
+      await pop.selectOption('select[name="VFHORA"]',{ label: hora });
 
       await pop.click('text=Confirmar');
       await page.waitForLoadState('networkidle');
-      console.log(`✅  Clase asignada ${hora}`);
+      console.log(`✅ Clase asignada ${hora}`);
     }
 
     /* 10. OK */
     const okPNG = stamp('after');
-    await page.screenshot({ path: okPNG, fullPage: true });
-    await discord('Clases agendadas ✅', '#00ff00', listPNG, okPNG);
-    console.log('🎉  Flujo completado');
-  } catch (err) {
+    await page.screenshot({ path:okPNG, fullPage:true });
+    await discord('Clases agendadas ✅','#00ff00',listPNG,okPNG);
+    console.log('🎉 Flujo completado');
+  } catch(err) {
     console.error(err);
-    const crash = stamp('crash');
-    await page.screenshot({ path: crash, fullPage: true }).catch(() => {});
-    await discord('Crash ❌', '#ff0000', crash);
+    const crashPNG = stamp('crash');
+    await page.screenshot({ path:crashPNG, fullPage:true }).catch(()=>{});
+    await discord('Crash ❌','#ff0000',crashPNG);
     process.exit(1);
   } finally {
     await browser.close();
