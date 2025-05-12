@@ -1,26 +1,21 @@
+// index.js
 const { chromium } = require("playwright");
 const { Webhook, MessageBuilder } = require("discord-webhook-node");
 const dayjs = require("dayjs");
 
 const { USER_ID, USER_PASS, WEBHOOK_URL } = process.env;
-if (!USER_ID || !USER_PASS || !WEBHOOK_URL) {
-  throw new Error("Faltan USER_ID, USER_PASS o WEBHOOK_URL");
-}
+if (!USER_ID || !USER_PASS || !WEBHOOK_URL) throw new Error("Faltan credenciales.");
 
 const hook = new Webhook(WEBHOOK_URL);
-async function discord(title, color, file) {
-  await hook.send(
-    new MessageBuilder().setTitle(title).setColor(color).setTimestamp()
-  );
+const stamp = (base) => `${base}_${dayjs().format("YYYY-MM-DD_HH-mm-ss")}.png`;
+async function notify(title, color, file) {
+  await hook.send(new MessageBuilder().setTitle(title).setColor(color).setTimestamp());
   if (file) await hook.sendFile(file);
 }
 
-const stamp = (base) => `${base}_${dayjs().format("YYYY-MM-DD_HH-mm-ss")}.png`;
-
 (async () => {
   const browser = await chromium.launch({ headless: true });
-  const ctx = await browser.newContext({ viewport: { width: 1280, height: 720 } });
-  const page = await ctx.newPage();
+  const page = await browser.newPage({ viewport:{width:1280,height:720} });
   page.setDefaultTimeout(30000);
 
   try {
@@ -29,41 +24,45 @@ const stamp = (base) => `${base}_${dayjs().format("YYYY-MM-DD_HH-mm-ss")}.png`;
     await page.fill('input[name="vUSUCOD"]', USER_ID);
     await page.fill('input[name="vPASS"]', USER_PASS);
     await Promise.all([
-      page.waitForSelector('img[alt="Programación"]'),
+      page.waitForNavigation(),
       page.press('input[name="vPASS"]', "Enter")
     ]);
 
-    // 2. ABRIR PROGRAMACIÓN
-    await page.click('img[alt="Programación"]');
-    await page.waitForSelector(`text=${PLAN_TXT.source.replace(/\\/g, "")}`);
+    // 2. ABRIR PROGRAMACIÓN (fallback por texto o src)
+    const prog = page.locator('text=Programación').first();
+    if (await prog.count()) {
+      await prog.click();
+    } else {
+      await page.locator('img[src*="PROGRAMACION"]').first().click();
+    }
 
     // 3. INICIAR PLAN
-    await page.click(`text=${PLAN_TXT.source.replace(/\\/g, "")}`);
+    await page.waitForSelector(`text=${PLAN_TXT.source.replace(/\\/g,"")}`);
+    await page.click(`text=${PLAN_TXT.source.replace(/\\/g,"")}`);
     await Promise.all([
       page.waitForSelector('select[name*="APROB"]'),
       page.click("text=Iniciar")
     ]);
 
-    // 4. FRAME / POPUP
-    const frame = page
-      .frames()
-      .find(f => f.locator('select[name*="APROB"]').countSync() > 0) || page;
-    
-    // 5. FILTRAR PENDIENTES
-    await frame.selectOption('select[name*="APROB"]', { label: "Pendientes por programar" });
+    // 4. LOCALIZAR POPUP EN FRAME
+    const frame = page.frames().find(f => f.locator('select[name*="APROB"]').countSync()>0) || page;
+
+    // 5. FILTRAR “Pendientes por programar”
+    const sel = frame.locator('select[name*="APROB"]');
+    if (!await sel.count()) throw new Error("No encontré el selector de estado.");
+    await sel.selectOption({ label: "Pendientes por programar" });
     await frame.waitForSelector('input[type="checkbox"][name="vCHECK"]');
 
-    const listPNG = stamp("list");
+    // 6. SCREENSHOT LISTADO
+    const listPNG = stamp("list"); 
     await frame.screenshot({ path: listPNG, fullPage: true });
 
-    // 6. BUCLE HORARIOS
+    // 7. BUCLE DE HORARIOS
     for (const hora of HORARIOS) {
       await frame.evaluate(() => document.documentElement.scrollTop = 0);
-      const checkbox = frame.locator('input[type="checkbox"][name="vCHECK"]').first();
-      if (!await checkbox.count()) {
-        throw new Error("No quedan filas pendientes.");
-      }
-      await checkbox.check();
+      const chk = frame.locator('input[type="checkbox"][name="vCHECK"]').first();
+      if (!await chk.count()) throw new Error("No quedan filas pendientes.");
+      await chk.check();
 
       await Promise.all([
         frame.waitForSelector('select[name="VTSEDE"]'),
@@ -76,26 +75,24 @@ const stamp = (base) => `${base}_${dayjs().format("YYYY-MM-DD_HH-mm-ss")}.png`;
       await frame.selectOption('select[name="VFHORA"]', { label: hora });
 
       await Promise.all([
-        frame.waitForSelector("text=Clase asignada", { timeout: 20000 }).catch(() => {}),
-        frame.click("text=Confirmar")
+        frame.click("text=Confirmar"),
+        frame.waitForTimeout(1000)  // breve espera para DOM
       ]);
     }
 
+    // 8. ÉXITO
     const okPNG = stamp("after");
     await frame.screenshot({ path: okPNG, fullPage: true });
-    await discord("✅ Clases agendadas", "#00ff00", okPNG);
-
+    await notify("✅ Clases agendadas", "#00ff00", okPNG);
     await browser.close();
   } catch (err) {
+    // 9. ERROR
     const crashPNG = stamp("crash");
     try {
-      // Screenshot del error en el frame disponible
-      const frame = page.frames().find(f => f.isAttached()) || page;
+      const frame = page.frames().find(f=>f.isAttached())||page;
       await frame.screenshot({ path: crashPNG, fullPage: true });
-    } catch (ssErr) {
-      console.error("Error al generar screenshot:", ssErr);
-    }
-    await discord(`❌ Crash: ${err.message}`, "#ff0000", crashPNG);
+    } catch{}
+    await notify(`❌ Crash: ${err.message}`, "#ff0000", crashPNG);
     await browser.close();
     process.exit(1);
   }
