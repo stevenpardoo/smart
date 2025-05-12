@@ -131,7 +131,7 @@ async function seleccionarFilaPendiente(pop) {
       console.log(`✅  Clase asignada ${hora}`);
     }
 
-    /* 10. OK */
+    /* 10. O.K */
     const okPNG = stamp('after');
     await page.screenshot({ path: okPNG, fullPage: true });
     await discord('Clases agendadas ✅', '#00ff00', listPNG, okPNG);
