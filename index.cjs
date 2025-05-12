@@ -1,4 +1,4 @@
-/* Auto Class Bot – cierra modal, entra a Programación, agenda DOS clases (18h y 19h30) y envía capturas a Discord */
+/* Auto Class Bot – FINAL VERSION */
 const { chromium } = require("playwright");
 const { Webhook, MessageBuilder } = require("discord-webhook-node");
 const dayjs = require("dayjs");
@@ -10,21 +10,18 @@ if (!USER_ID || !USER_PASS || !WEBHOOK_URL) {
   process.exit(1);
 }
 
-const PLAN_TEXT = /ING-B1, B2 Y C1 PLAN 582H/i; // texto exacto del plan
-const SEDE_TEXT = "CENTRO MAYOR"; // sede a elegir
-const HORARIOS = ["18:00", "19:30"]; // horarios en orden
-const ESTADO_VAL = "2"; // value de “Pendientes por programar”
+const PLAN_TEXT = /ING-B1, B2 Y C1 PLAN 582H/i;
+const SEDE_TEXT = "CENTRO MAYOR";
+const HORARIOS = ["18:00", "19:30"];
+const ESTADO_VAL = "2"; // "Pendientes por programar"
 
 /* ──────────────────────── Discord hook ───────────────────── */
 const hook = new Webhook(WEBHOOK_URL);
 async function sendToDiscord(title, color, ...files) {
-  const card = new MessageBuilder()
-    .setTitle(title)
-    .setColor(color)
-    .setTimestamp();
-  await hook.send(card).catch((e) => console.error("Error enviando mensaje a Discord:", e.message));
+  const card = new MessageBuilder().setTitle(title).setColor(color).setTimestamp();
+  await hook.send(card).catch((e) => console.error("Discord msg err:", e.message));
   for (const f of files) {
-    await hook.sendFile(f).catch((e) => console.error(`Error enviando archivo ${f} a Discord:`, e.message));
+    await hook.sendFile(f).catch((e) => console.error(`Discord file err (${f}):`, e.message));
   }
 }
 
@@ -32,164 +29,158 @@ async function sendToDiscord(title, color, ...files) {
 const stamp = (name) => `${name}_${dayjs().format("YYYY-MM-DD_HH-mm-ss")}.png`;
 
 async function cerrarModalInfo(page) {
-  console.log("🔍 Buscando modal de 'Información' para cerrar...");
+  console.log("🔍 Buscando modal de 'Información'...");
   try {
-    const modalContainer = page.locator('div[id^="gxp"][class*="gx-popup-default"]');
-    await modalContainer.waitFor({ state: 'visible', timeout: 10000 });
-
+    const modalCont = page.locator('div[id^="gxp"][class*="gx-popup-default"]');
+    await modalCont.waitFor({ state: 'visible', timeout: 7000 });
     const xBtn = page.locator('#gxp0_cls');
-    if (await xBtn.isVisible({ timeout: 2000 }).catch(() => false)) {
-      console.log("Intentando cerrar modal con botón X...");
-      await xBtn.click({ force: true, timeout: 5000 });
-      await modalContainer.waitFor({ state: 'hidden', timeout: 5000 });
-      console.log("🗙 Modal de 'Información' cerrado con botón X.");
-      return;
+    if (await xBtn.isVisible({ timeout: 1000 }).catch(() => false)) {
+      await xBtn.click({ force: true, timeout: 3000 });
+      await modalCont.waitFor({ state: 'hidden', timeout: 3000 });
+      console.log("🗙 Modal 'Información' cerrado (botón X)."); return;
     }
-
-    console.log("Botón X no funcionó o no encontrado, intentando ocultar modal por JS...");
     await page.evaluate(() => {
-      const modals = document.querySelectorAll('div[id^="gxp"][class*="gx-popup-default"]');
-      modals.forEach((m) => (m.style.display = "none"));
+      document.querySelectorAll('div[id^="gxp"][class*="gx-popup-default"]')
+        .forEach((m) => (m.style.display = "none"));
     });
-    await modalContainer.waitFor({ state: 'hidden', timeout: 5000 });
-    console.log("🗙 Modal de 'Información' ocultado por JS.");
-
-  } catch (e) {
-    console.log("ℹ️ Modal de 'Información' no detectado o ya estaba cerrado.");
-  }
+    await modalCont.waitFor({ state: 'hidden', timeout: 3000 });
+    console.log("🗙 Modal 'Información' ocultado (JS).");
+  } catch (e) { console.log("ℹ️ Modal 'Información' no apareció o ya cerrado."); }
 }
 
-async function getPopupWindowContext(page, selectorDelPopup, timeout = 20000) {
-  console.log(`🔍 Buscando contexto del popup con selector: ${selectorDelPopup}`);
+async function getPopupCtx(page, selectorInsidePopup, timeout = 15000) {
+  console.log(`🔍 Buscando contexto para popup con selector: ${selectorInsidePopup}`);
   const deadline = Date.now() + timeout;
   while (Date.now() < deadline) {
-    if (await page.locator(selectorDelPopup).isVisible({ timeout: 500 }).catch(() => false)) {
-      console.log("✅ Selector encontrado en la página principal.");
-      return page;
+    if (await page.locator(selectorInsidePopup).count() > 0 && await page.locator(selectorInsidePopup).first().isVisible().catch(()=>false) ) {
+      console.log("✅ Selector encontrado en página principal."); return page;
     }
     for (const frame of page.frames()) {
-      if (await frame.locator(selectorDelPopup).isVisible({ timeout: 500 }).catch(() => false)) {
-        console.log("✅ Selector encontrado en un iframe.");
-        return frame;
+      if (await frame.locator(selectorInsidePopup).count() > 0 && await frame.locator(selectorInsidePopup).first().isVisible().catch(()=>false)) {
+        console.log("✅ Selector encontrado en iframe."); return frame;
       }
     }
     await page.waitForTimeout(500);
   }
-  throw new Error(`No se encontró el contexto del popup con selector "${selectorDelPopup}" después de ${timeout / 1000}s`);
+  throw new Error(`Timeout: No se encontró contexto para popup con selector "${selectorInsidePopup}"`);
 }
-
 
 /* ────────────────────────── FLUJO PRINCIPAL ───────────────────────── */
 (async () => {
   const browser = await chromium.launch({ headless: true });
-  const ctx = await browser.newContext({ viewport: { width: 1280, height: 720 } });
+  const ctx = await browser.newContext({ viewport: { width: 1280, height: 800 } }); // Un poco más alto
   const page = await ctx.newPage();
   page.setDefaultTimeout(90000);
 
   try {
     /* 1. LOGIN */
-    console.log("🚀 Iniciando flujo: Navegando a la página de login...");
+    console.log("🚀 Iniciando: Login...");
     await page.goto("https://schoolpack.smart.edu.co/idiomas/alumnos.aspx", {
       waitUntil: "domcontentloaded", timeout: 60000
     });
-    console.log("Página de login cargada. Rellenando credenciales...");
     await page.fill('input[name="vUSUCOD"]', USER_ID);
     await page.fill('input[name="vPASS"]', USER_PASS);
-    console.log("Credenciales rellenadas. Haciendo clic en 'Confirmar'...");
     await Promise.all([
         page.waitForLoadState("networkidle", { timeout: 30000 }),
         page.click('input[name="BUTTON1"]')
     ]);
-    console.log("Login realizado. Esperando posible modal de 'Información'...");
+    console.log("Login OK. Cerrando modal de información si existe...");
 
-    /* 2. CERRAR MODAL DE "INFORMACIÓN" (PAZ Y SALVO) */
+    /* 2. CERRAR MODAL DE "INFORMACIÓN" */
     await cerrarModalInfo(page);
 
     /* 3. MENÚ PRINCIPAL → Programación */
-    console.log("🔍 Buscando icono de 'Programación' (o 'Matriculas')...");
-    const progIconLocator = page.locator('img[src*="PROGRAMACION"], img[alt="Matriculas"], img[title="Matriculas"]');
-    await progIconLocator.first().waitFor({ state: 'visible', timeout: 30000 });
-    console.log("Icono encontrado. Haciendo clic...");
-    await progIconLocator.first().click();
+    console.log("🔍 Navegando a Programación...");
+    const progIconLoc = page.locator('img[src*="PROGRAMACION"], img[alt="Matriculas"], img[title="Matriculas"]');
+    await progIconLoc.first().waitFor({ state: 'visible', timeout: 30000 });
+    await progIconLoc.first().click();
     await page.waitForLoadState("networkidle", { timeout: 30000 });
-    console.log("Página de 'Programación' cargada.");
+    console.log("Página de Programación OK.");
 
     /* 4. SELECCIONAR PLAN Y PULSAR “INICIAR” */
-    console.log("🔍 Buscando plan:", PLAN_TEXT);
-    const rowPlan = page.locator(`text=${PLAN_TEXT}`).first();
-    await rowPlan.waitFor({ state: 'visible', timeout: 20000 });
-    console.log("Plan encontrado. Haciendo clic...");
-    await rowPlan.click();
-    console.log("Haciendo clic en 'Iniciar'...");
+    console.log("🔍 Seleccionando plan:", PLAN_TEXT);
+    await page.locator(`text=${PLAN_TEXT}`).first().click();
     await page.click("text=Iniciar");
-    // En lugar de networkidle, esperamos que el popup de "Programar clases" esté listo
-    await page.waitForSelector('iframe[id^="gxp"]', { state: 'attached', timeout: 20000 }); // Esperar que el iframe del popup exista
+    await page.waitForSelector('iframe[id^="gxp"]', { state: 'attached', timeout: 20000 });
     console.log("Popup 'Programar clases' (iframe) detectado.");
 
-    /* 5. OBTENER CONTEXTO DEL POPUP "PROGRAMAR CLASES" (CON O SIN IFRAME) */
-    const pop = await getPopupWindowContext(page, 'select[name$="APROBO"]');
-    console.log("✅ Contexto del popup 'Programar clases' obtenido.");
+    /* 5. OBTENER CONTEXTO DEL POPUP "PROGRAMAR CLASES" */
+    // Usamos el botón "Asignar" como referencia porque el combo de estado puede no estar si ya está filtrado.
+    const pop = await getPopupCtx(page, 'input[type="button"][value="Asignar"]');
+    console.log("✅ Contexto del popup 'Programar clases' OK.");
 
-    /* 6. FILTRO “Pendientes por programar” */
-    console.log("🔍 Aplicando filtro 'Pendientes por programar'...");
-    const selectEstado = pop.locator('select[name$="APROBO"]');
-    await selectEstado.waitFor({ state: 'visible', timeout: 10000 });
-    await selectEstado.selectOption(ESTADO_VAL);
-    // Después de cambiar el select, la tabla de clases debería actualizarse.
-    // Esperamos a que el primer checkbox de la tabla sea visible como señal.
-    await pop.locator('input[type=checkbox][name="vCHECK"]:not([disabled])').first().waitFor({ state: 'visible', timeout: 20000 });
-    console.log("Filtro aplicado y tabla de clases actualizada.");
+    /* 6. FILTRO “Pendientes por programar” (SI ES NECESARIO) */
+    console.log("🔍 Verificando/Aplicando filtro 'Pendientes por programar'...");
+    const selectEstado = pop.locator('select[name$="APROBO"]'); // Termina en APROBO
+    if (await selectEstado.isVisible({timeout: 3000}).catch(()=>false)) { // Solo si el combo es visible
+        const estadoActual = await selectEstado.inputValue();
+        if (estadoActual !== ESTADO_VAL) {
+            await selectEstado.selectOption(ESTADO_VAL);
+            // Esperar a que la tabla se actualice después del filtro
+            await pop.waitForFunction(async (expectedVal) => {
+                const currentVal = await document.querySelector('select[name$="APROBO"]').value;
+                // También podrías verificar aquí si la tabla de clases tiene algún contenido específico
+                return currentVal === expectedVal;
+            }, ESTADO_VAL, { timeout: 15000 });
+            console.log("Filtro 'Pendientes' aplicado.");
+        } else {
+            console.log("ℹ️ Filtro ya estaba en 'Pendientes'.");
+        }
+    } else {
+        console.log("ℹ️ Combo de estado no visible, asumiendo filtro correcto.");
+    }
+    await page.waitForTimeout(1000); // Pausa para que la tabla cargue
 
     /* 7. CAPTURA LISTADO INICIAL */
-    const listPNG = stamp("list");
+    const listPNG = stamp("list_clases_pendientes");
     console.log("📸 Capturando listado de clases:", listPNG);
     await page.screenshot({ path: listPNG, fullPage: true });
 
     /* 8. BUCLE DE HORARIOS */
     for (const hora of HORARIOS) {
-      console.log(`➡️  Intentando agendar clase para las ${hora}...`);
+      console.log(`➡️  Agendando clase para las ${hora}...`);
 
-      /* 8-a Marcar primera fila pendiente */
-      console.log("🔍 Buscando primera fila pendiente...");
-      const filaCheckbox = pop.locator('input[type=checkbox][name="vCHECK"]:not([disabled])').first();
+      /* 8-a Marcar primera fila pendiente con checkbox */
+      console.log("🔍 Buscando checkbox habilitado en la tabla...");
+      // Selector más genérico: cualquier input checkbox dentro de una celda de la tabla de clases, que no esté disabled
+      const filaCheckbox = pop.locator('table[id*="Grid"] tbody tr td input[type="checkbox"]:not([disabled])').first();
+
+      await filaCheckbox.waitFor({ state: 'visible', timeout: 15000 }); // Esperar que sea visible
       if (!await filaCheckbox.count()) {
-        // Tomar screenshot antes de lanzar el error si no hay filas
-        const noFilasPNG = stamp(`no_filas_${hora.replace(":", "")}`);
+        const noFilasPNG = stamp(`no_checkbox_${hora.replace(":", "")}`);
         await page.screenshot({ path: noFilasPNG, fullPage: true });
-        await sendToDiscord(`⚠️ No hay filas pendientes para ${hora}`, "#ffa500", listPNG, noFilasPNG);
-        throw new Error(`No quedan filas pendientes para agendar la hora ${hora}.`);
+        await sendToDiscord(`⚠️ No se encontraron checkboxes habilitados para ${hora}`, "#ffa500", listPNG, noFilasPNG);
+        throw new Error(`No se encontraron checkboxes habilitados para agendar la hora ${hora}.`);
       }
       await filaCheckbox.scrollIntoViewIfNeeded();
       await filaCheckbox.check();
-      console.log("Primera fila pendiente marcada.");
+      console.log("Checkbox de primera fila pendiente marcada.");
 
       /* 8-b "Asignar" */
       console.log("Haciendo clic en 'Asignar'...");
-      await pop.click("text=Asignar");
-      // El clic en "Asignar" abre OTRO popup o actualiza el contenido.
-      // Necesitamos esperar el combo de Sede dentro de este nuevo contexto/popup.
-      // Como no sabemos si es un nuevo iframe o el mismo, volvemos a buscar el contexto.
-      const popAsignar = await getPopupWindowContext(page, 'select[name="VTSEDE"]', 15000);
-      console.log("Popup de asignación abierto (o contexto encontrado).");
+      await pop.locator('input[type="button"][value="Asignar"]').click(); // Botón Asignar por su value
 
+      // El clic en "Asignar" abre un sub-popup. Necesitamos obtener su contexto.
+      const popAsignar = await getPopupCtx(page, 'select[name="VTSEDE"]', 15000); // Combo de Sede
+      console.log("Popup de asignación de Sede/Día/Hora abierto.");
 
       /* 8-c Sede */
       console.log("🔍 Seleccionando sede:", SEDE_TEXT);
       await popAsignar.selectOption('select[name="VTSEDE"]', { label: SEDE_TEXT });
-      await page.waitForTimeout(1000); // Pequeña pausa para que cargue el siguiente combo si depende de la sede
+      await page.waitForTimeout(1500); // Pausa para que el combo de Día se actualice
 
       /* 8-d Día: segunda opción de la lista habilitada */
-      console.log("🔍 Seleccionando día (segunda opción disponible)...");
+      console.log("🔍 Seleccionando día (segunda opción)...");
       const selectDia = popAsignar.locator('select[name="VFDIA"]');
-      await selectDia.waitFor({ state: 'visible', timeout: 10000 }); // Asegurar que el combo de día esté visible
+      await selectDia.waitFor({ state: 'visible', timeout: 10000 });
       const diaOptions = selectDia.locator('option:not([disabled])');
       if (await diaOptions.count() < 2) {
-        throw new Error("No hay al menos dos días disponibles para seleccionar.");
+        throw new Error("No hay al menos dos días disponibles.");
       }
       const diaValue = await diaOptions.nth(1).getAttribute("value");
       await selectDia.selectOption(diaValue);
       console.log("Día seleccionado.");
-      await page.waitForTimeout(1000); // Pausa para que cargue el combo de hora
+      await page.waitForTimeout(1500); // Pausa para que el combo de Hora se actualice
 
       /* 8-e Hora */
       console.log("🔍 Seleccionando hora:", hora);
@@ -200,50 +191,32 @@ async function getPopupWindowContext(page, selectorDelPopup, timeout = 20000) {
 
       /* 8-f Confirmar */
       console.log("Haciendo clic en 'Confirmar'...");
-      // El botón confirmar podría estar en el contexto 'popAsignar' o 'pop' o 'page'
-      // Intentamos en el contexto más específico primero
-      let btnConfirmar;
-      if (await popAsignar.locator("text=Confirmar").isVisible({timeout:1000}).catch(()=>false)) {
-          btnConfirmar = popAsignar.locator("text=Confirmar");
-      } else if (await pop.locator("text=Confirmar").isVisible({timeout:1000}).catch(()=>false)) {
-          btnConfirmar = pop.locator("text=Confirmar");
-      } else {
-          btnConfirmar = page.locator("text=Confirmar");
-      }
+      const btnConfirmar = popAsignar.locator('input[type="button"][value="Confirmar"]'); // Botón por su value
       await btnConfirmar.click();
-      // Después de confirmar, la página principal (o el popup 'pop') debería actualizarse.
-      // No usamos networkidle aquí, sino que esperamos que la tabla de pendientes se refresque
-      // o que aparezca un mensaje de éxito (si lo hay).
-      // Por ahora, una pausa fija es más segura para GeneXus.
-      await page.waitForTimeout(5000); // Ajusta esta pausa según sea necesario
-      console.log(`✅ Clase para las ${hora} agendada (o intento realizado).`);
+      
+      // Esperar a que el popup de asignación se cierre o la tabla principal se actualice.
+      // Una forma es esperar que el botón "Asignar" del popup principal vuelva a ser visible.
+      await pop.locator('input[type="button"][value="Asignar"]').waitFor({ state: 'visible', timeout: 20000 });
+      console.log(`✅ Clase para las ${hora} agendada.`);
 
       if (HORARIOS.indexOf(hora) < HORARIOS.length - 1) {
-          console.log("Preparando para la siguiente clase...");
-          // Volver a filtrar "Pendientes por programar" si la interfaz se resetea
-          const selectEstadoRefresh = pop.locator('select[name$="APROBO"]');
-          if (await selectEstadoRefresh.isVisible({timeout: 3000}).catch(()=>false)){
-             await selectEstadoRefresh.selectOption(ESTADO_VAL);
-             await pop.locator('input[type=checkbox][name="vCHECK"]:not([disabled])').first().waitFor({ state: 'visible', timeout: 10000 });
-             console.log("Filtro de pendientes refrescado.");
-          } else {
-              console.log("No se pudo encontrar el filtro de estado para refrescar, continuando...");
-          }
+        console.log("Preparando para la siguiente clase...");
+        await page.waitForTimeout(2000); // Pausa para refresco de la tabla de pendientes
       }
     }
 
     /* 9. CAPTURA FINAL Y NOTIFICACIÓN OK */
-    const okPNG = stamp("after_all_bookings");
+    const okPNG = stamp("todas_clases_agendadas");
     console.log("📸 Capturando estado final:", okPNG);
     await page.screenshot({ path: okPNG, fullPage: true });
-    await sendToDiscord("✅✅ Clases agendadas exitosamente ✅✅", "#00ff00", listPNG, okPNG);
-    console.log("🎉 Flujo completado sin errores.");
+    await sendToDiscord("✅✅ TODAS LAS CLASES AGENDADAS ✅✅", "#00ff00", listPNG, okPNG);
+    console.log("🎉 Flujo completado exitosamente.");
 
   } catch (err) {
-    console.error("💥 ERROR EN EL FLUJO PRINCIPAL:", err);
-    const crashPNG = stamp("crash");
+    console.error("💥 ERROR CRÍTICO EN EL FLUJO:", err);
+    const crashPNG = stamp("CRASH_GENERAL");
     await page.screenshot({ path: crashPNG, fullPage: true }).catch((e) => console.error("Error al tomar screenshot del crash:", e.message));
-    await sendToDiscord(`❌ CRASH EN EL BOT (${dayjs().format("HH:mm")})`, "#ff0000", crashPNG);
+    await sendToDiscord(`❌❌ CRASH EN EL BOT (${dayjs().format("HH:mm")}) ❌❌`, "#ff0000", crashPNG);
     process.exit(1);
   } finally {
     if (browser) {
