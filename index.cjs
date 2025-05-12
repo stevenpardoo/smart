@@ -1,102 +1,140 @@
-/* Auto-Class Bot – agenda 18 h y 19 h 30 y notifica en Discord */
-import { chromium } from "playwright";
-import { Webhook, MessageBuilder } from "discord-webhook-node";
-import dayjs from "dayjs";
+/*  Auto‑Class Bot – agenda 18 h y 19 h 30 y manda capturas a Discord  */
+const { chromium }               = require("playwright");
+const { Webhook, MessageBuilder } = require("discord-webhook-node");
+const dayjs = require("dayjs");
 
+/* ─── ENV ───────────────────────────────────────────────────────── */
 const { USER_ID, USER_PASS, WEBHOOK_URL } = process.env;
 if (!USER_ID || !USER_PASS || !WEBHOOK_URL) {
-  console.error("❌ Faltan ENV vars");
-  process.exit(1);
+  console.error("❌  Faltan USER_ID, USER_PASS o WEBHOOK_URL"); process.exit(1);
 }
 
-const PLAN_TXT = /ING-B1, B2 Y C1 PLAN 582H/i;
-const SEDE_TXT = "CENTRO MAYOR";
-const HORAS    = ["18:00", "19:30"];
-const hook     = new Webhook(WEBHOOK_URL);
+/* ─── PARÁMETROS DEL FLUJO ─────────────────────────────────────── */
+const PLAN_TXT   = /ING-B1, B2 Y C1 PLAN 582H/i;
+const SEDE_TXT   = "CENTRO MAYOR";
+const HORARIOS   = ["18:00", "19:30"];          // orden en que se toman
+const ESTADO_VAL = "2";                         // value de “Pendientes…”
 
-const snap = name => `${name}_${dayjs().format("YYYY-MM-DD_HH-mm-ss")}.png`;
-async function notify(title, color, file) {
-  const msg = new MessageBuilder().setTitle(title).setColor(color).setTimestamp();
-  await hook.send(msg).catch(()=>{});
-  if (file) await hook.sendFile(file).catch(()=>{});
+/* ─── Discord helper ───────────────────────────────────────────── */
+const hook = new Webhook(WEBHOOK_URL);
+async function discord(title, color, ...files) {
+  await hook
+    .send(new MessageBuilder().setTitle(title).setColor(color).setTimestamp())
+    .catch(() => {});
+  for (const f of files) await hook.sendFile(f).catch(() => {});
 }
 
+/* ─── Utils ─────────────────────────────────────────────────────── */
+const stamp = (base) => `${base}_${dayjs().format("YYYY-MM-DD_HH-mm-ss")}.png`;
+
+async function cerrarModal(page) {
+  const x = page.locator("#gxp0_cls");
+  if (await x.isVisible().catch(() => false)) return x.click();
+  await page.evaluate(() => {
+    document
+      .querySelectorAll('div[id^="gxp"][class*="popup"]')
+      .forEach((e) => (e.style.display = "none"));
+  });
+}
+
+async function contextoPopup(page, timeout = 15_000) {
+  const deadline = Date.now() + timeout;
+  while (Date.now() < deadline) {
+    for (const ctx of [page, ...page.frames()]) {
+      const sel = ctx.locator('select[name$="APROBO"]');
+      if (await sel.count()) return ctx;
+    }
+    await page.waitForTimeout(300);
+  }
+  throw new Error('No apareció select[name$="APROBO"]');
+}
+
+/* ─── FLUJO PRINCIPAL ──────────────────────────────────────────── */
 (async () => {
   const browser = await chromium.launch({ headless: true });
-  let page;
-  try {
-    const context = await browser.newContext({ viewport: { width: 1280, height: 720 } });
-    page = await context.newPage();
-    page.setDefaultTimeout(90000);
+  const ctx = await browser.newContext({ viewport: { width: 1280, height: 720 } });
+  const page = await ctx.newPage();
+  page.setDefaultTimeout(90_000);
 
-    // 1. Login
-    await page.goto("https://schoolpack.smart.edu.co/idiomas/alumnos.aspx", { waitUntil: "domcontentloaded" });
+  try {
+    /* 1. LOGIN */
+    await page.goto("https://schoolpack.smart.edu.co/idiomas/alumnos.aspx", {
+      waitUntil: "domcontentloaded",
+    });
     await page.fill('input[name="vUSUCOD"]', USER_ID);
     await page.fill('input[name="vPASS"]', USER_PASS);
-    await Promise.all([
-      page.waitForSelector('img[alt="Programación"], img[alt="Matriculas"]'),
-      page.press('input[name="vPASS"]', "Enter")
-    ]);
+    await page.click('input[name="BUTTON1"]');
 
-    // 2. Menú → Programación → plan → iniciar
-    await page.click('img[alt="Programación"], img[alt="Matriculas"]');
+    /* 2. MODAL */
+    await page.waitForTimeout(1000);
+    await cerrarModal(page);
+
+    /* 3. MENÚ → Programación */
+    await page
+      .locator('img[src*="PROGRAMACION"], img[alt="Matriculas"]')
+      .first()
+      .click();
     await page.waitForLoadState("networkidle");
-    await page.click(`text=${PLAN_TXT}`);
-    await Promise.all([
-      page.waitForSelector("text=Programar clases"),
-      page.click('input[value="Iniciar"]')
-    ]);
 
-    // 3. Espera popup y filtra “Pendientes…”
-    const pop = await page.waitForSelector('text=/Estado de las clases:/i').then(() => page);
-    await page.selectOption('select[name$="APROBO"]', "2");
+    /* 4. PLAN + Iniciar */
+    await page.locator(`text=${PLAN_TXT}`).first().click();
+    await page.click("text=Iniciar");
+    await page.waitForLoadState("networkidle");
 
-    // 4. Captura inicial
-    const listPNG = snap("list");
+    /* 5. CONTEXTO DEL POPUP (con o sin iframe) */
+    console.log("🔍 buscando popup…");
+    const pop = await contextoPopup(page);
+
+    /* 6. FILTRO “Pendientes por programar”                       */
+    await pop.selectOption('select[name$="APROBO"]', ESTADO_VAL);
+
+    /* 7. screenshot del listado inicial */
+    const listPNG = stamp("list");
     await page.screenshot({ path: listPNG, fullPage: true });
 
-    // 5. Bucle de reserva
-    for (const hora of HORAS) {
-      const chk = page.locator('input[type="checkbox"][name="vCHECK"]').first();
-      if (!await chk.count()) throw new Error("No quedan filas pendientes");
-      await chk.scrollIntoViewIfNeeded();
-      await chk.check();
+    /* 8. BUCLE DE HORARIOS */
+    for (const hora of HORARIOS) {
+      /* –– scroll hasta arriba por si el checkbox quedó fuera de vista */
+      await pop.evaluate(() => (document.querySelector("body").scrollTop = 0));
 
-      await page.click("text=Asignar");
-      await page.waitForSelector('select[name="VTSEDE"]');
-      await page.selectOption('select[name="VTSEDE"]', { label: SEDE_TXT });
+      /* 8‑a marcar primera fila pendiente */
+      const fila = pop.locator('input[type=checkbox][name="vCHECK"]').first();
+      if (!await fila.count()) throw new Error("No quedan filas pendientes.");
+      await fila.check();
 
-      // retry días
-      let diaOk = false;
-      for (let i=0; i<3 && !diaOk; i++) {
-        const opts = await page.locator('select[name="VFDIA"] option:not([disabled])').count();
-        if (opts > 1) diaOk = true;
-        else await page.waitForTimeout(2000);
-      }
-      if (!diaOk) throw new Error("No hay días disponibles");
-      const val = await page.locator('select[name="VFDIA"] option:not([disabled])').nth(1).getAttribute("value");
-      await page.selectOption('select[name="VFDIA"]', val);
+      /* 8‑b Asignar */
+      await pop.click("text=Asignar");
+      await pop.locator('select[name="VTSEDE"]').waitFor();
 
-      await page.selectOption('select[name="VFHORA"]', { label: hora });
-      await Promise.all([
-        page.click("text=Confirmar"),
-        page.waitForLoadState("networkidle")
-      ]);
+      /* 8‑c Sede */
+      await pop.selectOption('select[name="VTSEDE"]', { label: SEDE_TXT });
+
+      /* 8‑d Día: segunda opción de la lista habilitada            */
+      const dOpt = pop
+        .locator('select[name="VFDIA"] option:not([disabled])')
+        .nth(1);
+      const dVal = await dOpt.getAttribute("value");
+      await pop.selectOption('select[name="VFDIA"]', dVal);
+
+      /* 8‑e Hora */
+      await pop.selectOption('select[name="VFHORA"]', { label: hora });
+
+      /* 8‑f Confirmar */
+      await pop.click("text=Confirmar");
+      await page.waitForLoadState("networkidle");
     }
 
-    // 6. Captura final y notificación
-    const okPNG = snap("after");
+    /* 9. OK */
+    const okPNG = stamp("after");
     await page.screenshot({ path: okPNG, fullPage: true });
-    await notify("✅ Clases agendadas", "#00ff00", okPNG);
-    process.exit(0);
-
+    await discord("✅ Clases agendadas", "#00ff00", listPNG, okPNG);
+    console.log("✅ Flujo completado");
   } catch (err) {
     console.error(err);
-    const crashPNG = page ? snap("crash") : null;
-    if (page) await page.screenshot({ path: crashPNG, fullPage: true }).catch(()=>{});
-    await notify("❌ Crash", "#ff0000", crashPNG);
+    const crash = stamp("crash");
+    await page.screenshot({ path: crash, fullPage: true }).catch(() => {});
+    await discord("❌ Crash", "#ff0000", crash);
     process.exit(1);
-
   } finally {
     await browser.close();
   }
