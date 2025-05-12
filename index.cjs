@@ -1,63 +1,102 @@
-import { chromium } from 'playwright';
-const { USER_ID, USER_PWD } = process.env;
-if (!USER_ID || !USER_PWD) throw new Error('ENV vars missing');
+const { chromium } = require("playwright");
+const { Webhook, MessageBuilder } = require("discord-webhook-node");
+const dayjs = require("dayjs");
+
+const { USER_ID, USER_PASS, WEBHOOK_URL } = process.env;
+if (!USER_ID || !USER_PASS || !WEBHOOK_URL) {
+  throw new Error("Faltan USER_ID, USER_PASS o WEBHOOK_URL");
+}
+
+const hook = new Webhook(WEBHOOK_URL);
+async function discord(title, color, file) {
+  await hook.send(
+    new MessageBuilder().setTitle(title).setColor(color).setTimestamp()
+  );
+  if (file) await hook.sendFile(file);
+}
+
+const stamp = (base) => `${base}_${dayjs().format("YYYY-MM-DD_HH-mm-ss")}.png`;
 
 (async () => {
   const browser = await chromium.launch({ headless: true });
-  const page = await browser.newPage({ viewport: { width: 1280, height: 800 } });
-  page.setDefaultNavigationTimeout(60000);
+  const ctx = await browser.newContext({ viewport: { width: 1280, height: 720 } });
+  const page = await ctx.newPage();
+  page.setDefaultTimeout(30000);
 
   try {
     // 1. LOGIN
-    await page.goto('https://schoolpack.smart.edu.co/idiomas/alumnos.aspx');
+    await page.goto("https://schoolpack.smart.edu.co/idiomas/alumnos.aspx");
     await page.fill('input[name="vUSUCOD"]', USER_ID);
-    await page.fill('input[name="vPASS"]', USER_PWD);
+    await page.fill('input[name="vPASS"]', USER_PASS);
     await Promise.all([
-      page.waitForSelector('img[alt="Programación"]', { timeout: 60000 }),
-      page.press('input[name="vPASS"]', 'Enter')
+      page.waitForSelector('img[alt="Programación"]'),
+      page.press('input[name="vPASS"]', "Enter")
     ]);
 
-    // 2. Programación → Plan
+    // 2. ABRIR PROGRAMACIÓN
     await page.click('img[alt="Programación"]');
-    await page.waitForSelector('text=INGB1C1', { timeout: 30000 });
-    await page.click('text=INGB1C1');
+    await page.waitForSelector(`text=${PLAN_TXT.source.replace(/\\/g, "")}`);
+
+    // 3. INICIAR PLAN
+    await page.click(`text=${PLAN_TXT.source.replace(/\\/g, "")}`);
     await Promise.all([
-      page.waitForSelector('text=Programar clases', { timeout: 30000 }),
-      page.click('input[value="Iniciar"]')
+      page.waitForSelector('select[name*="APROB"]'),
+      page.click("text=Iniciar")
     ]);
 
-    // 3. Función genérica para asignar una franja
-    const asignarHora = async (horaTexto) => {
-      await page.selectOption('select[name="EstadoClases"]', { label: 'Pendientes por programar' });
-      await page.check('table tbody tr:first-child input[type="checkbox"]');
-      await page.click('button:has-text("Asignar")');
+    // 4. FRAME / POPUP
+    const frame = page
+      .frames()
+      .find(f => f.locator('select[name*="APROB"]').countSync() > 0) || page;
+    
+    // 5. FILTRAR PENDIENTES
+    await frame.selectOption('select[name*="APROB"]', { label: "Pendientes por programar" });
+    await frame.waitForSelector('input[type="checkbox"][name="vCHECK"]');
 
-      const daySelect = await page.waitForSelector('select[name="Dia"]', { timeout: 30000 });
-      await daySelect.selectOption({ index: 1 }); // segunda opción de día
-      if (await page.$('text=No hay salones disponibles')) {
-        console.log(`⏸ Sin salones para ${horaTexto}`);
-        return false;
+    const listPNG = stamp("list");
+    await frame.screenshot({ path: listPNG, fullPage: true });
+
+    // 6. BUCLE HORARIOS
+    for (const hora of HORARIOS) {
+      await frame.evaluate(() => document.documentElement.scrollTop = 0);
+      const checkbox = frame.locator('input[type="checkbox"][name="vCHECK"]').first();
+      if (!await checkbox.count()) {
+        throw new Error("No quedan filas pendientes.");
       }
+      await checkbox.check();
 
-      // clic en la fila que contiene el texto completo de la hora
-      await page.click(`text="${horaTexto}"`, { timeout: 10000 });
       await Promise.all([
-        page.click('button:has-text("Confirmar")'),
-        page.waitForSelector('text=Clase asignada', { timeout: 60000 }).catch(() => null)
+        frame.waitForSelector('select[name="VTSEDE"]'),
+        frame.click("text=Asignar")
       ]);
-      console.log(`✅ Clase programada ${horaTexto}.`);
-      return true;
-    };
 
-    // 4. Agenda dos franjas
-    await asignarHora('18:00');
-    await asignarHora('19 19:30 21:00');
+      await frame.selectOption('select[name="VTSEDE"]', { label: SEDE_TXT });
+      const diaOpt = frame.locator('select[name="VFDIA"] option:not([disabled])').nth(1);
+      await frame.selectOption('select[name="VFDIA"]', await diaOpt.getAttribute("value"));
+      await frame.selectOption('select[name="VFHORA"]', { label: hora });
+
+      await Promise.all([
+        frame.waitForSelector("text=Clase asignada", { timeout: 20000 }).catch(() => {}),
+        frame.click("text=Confirmar")
+      ]);
+    }
+
+    const okPNG = stamp("after");
+    await frame.screenshot({ path: okPNG, fullPage: true });
+    await discord("✅ Clases agendadas", "#00ff00", okPNG);
 
     await browser.close();
-    process.exit(0);
   } catch (err) {
-    console.error('⚠️ Error controlado:', err.message);
+    const crashPNG = stamp("crash");
+    try {
+      // Screenshot del error en el frame disponible
+      const frame = page.frames().find(f => f.isAttached()) || page;
+      await frame.screenshot({ path: crashPNG, fullPage: true });
+    } catch (ssErr) {
+      console.error("Error al generar screenshot:", ssErr);
+    }
+    await discord(`❌ Crash: ${err.message}`, "#ff0000", crashPNG);
     await browser.close();
-    process.exit(0);
+    process.exit(1);
   }
 })();
