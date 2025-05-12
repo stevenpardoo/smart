@@ -50,10 +50,12 @@ async function contextoPopup(page, timeout = 15_000) {
   throw new Error('No apareció select[name$="APROBO"]');
 }
 
-/* Selecciona siempre la PRIMERA fila pendiente usando su checkbox */
+/* ─── Nueva selección: siempre la PRIMERA fila del <tbody> ───── */
 async function seleccionarFilaPendiente(pop) {
-  const chk = pop.locator('input[type="checkbox"][name="vCHECK"]').first();
-  if (!(await chk.count())) return false;
+  // Primer <tr> de datos (tbody), índice 0
+  const row = pop.locator('table tbody tr').nth(0);
+  const chk = row.locator('input[type="checkbox"][name="vCHECK"]');
+  if (!await chk.count()) return false;
   await chk.scrollIntoViewIfNeeded();
   await chk.check();
   return true;
@@ -68,9 +70,7 @@ async function seleccionarFilaPendiente(pop) {
 
   try {
     /* 1. LOGIN */
-    await page.goto('https://schoolpack.smart.edu.co/idiomas/alumnos.aspx', {
-      waitUntil: 'domcontentloaded',
-    });
+    await page.goto('https://schoolpack.smart.edu.co/idiomas/alumnos.aspx', { waitUntil: 'domcontentloaded' });
     await page.fill('input[name="vUSUCOD"]', USER_ID);
     await page.fill('input[name="vPASS"]', USER_PASS);
     await page.click('input[name="BUTTON1"]');
@@ -96,14 +96,14 @@ async function seleccionarFilaPendiente(pop) {
 
     /* 6. Estado “Pendientes” */
     await pop.selectOption('select[name$="APROBO"]', ESTADO_VAL);
-    await page.waitForTimeout(800);          // post-back
-    pop = await contextoPopup(page);         // nuevo iframe
+    await page.waitForTimeout(800);
+    pop = await contextoPopup(page);
 
     /* 7. Captura listado inicial */
     const listPNG = stamp('list');
     await page.screenshot({ path: listPNG, fullPage: true });
 
-    /* 8. Verifica disponibilidad inicial */
+    /* 8. Verifica y marca la PRIMERA fila */
     if (!(await seleccionarFilaPendiente(pop))) {
       await discord('Sin disponibilidad ❕', '#ffaa00', listPNG);
       console.log('Sin filas pendientes. Termina limpio.');
