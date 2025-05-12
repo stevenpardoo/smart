@@ -93,14 +93,25 @@ async function contextoPopup(page, timeout = 15_000) {
     const listPNG = stamp('list');
     await page.screenshot({ path: listPNG, fullPage: true });
 
-    /* 8. BUCLE DE HORARIOS */
+    /* 8. Validar disponibilidad general */
+    const disponible = await pop
+      .locator('input[type=checkbox][name="vCHECK"]:not([disabled])')
+      .count();
+
+    if (!disponible) {
+      await discord('Sin disponibilidad ❕', '#ffaa00', listPNG);
+      console.log('Sin filas pendientes. Termina limpio.');
+      process.exit(0);                       // éxito sin reservas
+    }
+
+    /* 9. BUCLE DE HORARIOS */
     for (const hora of HORARIOS) {
       await pop.evaluate(() => (document.querySelector('body').scrollTop = 0));
 
       const fila = pop
         .locator('input[type=checkbox][name="vCHECK"]:not([disabled])')
         .first();
-      if (!await fila.count()) throw new Error('No quedan filas pendientes.');
+      if (!await fila.count()) break;        // se agotaron mientras iteraba
       await fila.check();
 
       await pop.click('text=Asignar');
@@ -116,9 +127,10 @@ async function contextoPopup(page, timeout = 15_000) {
 
       await pop.click('text=Confirmar');
       await page.waitForLoadState('networkidle');
+      console.log(`✅  Clase asignada ${hora}`);
     }
 
-    /* 9. OK */
+    /* 10. OK */
     const okPNG = stamp('after');
     await page.screenshot({ path: okPNG, fullPage: true });
     await discord('Clases agendadas ✅', '#00ff00', listPNG, okPNG);
