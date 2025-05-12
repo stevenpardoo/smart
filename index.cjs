@@ -58,9 +58,7 @@ async function contextoPopup(page, timeout = 15_000) {
 
   try {
     /* 1. LOGIN */
-    await page.goto('https://schoolpack.smart.edu.co/idiomas/alumnos.aspx', {
-      waitUntil: 'domcontentloaded',
-    });
+    await page.goto('https://schoolpack.smart.edu.co/idiomas/alumnos.aspx', { waitUntil: 'domcontentloaded' });
     await page.fill('input[name="vUSUCOD"]', USER_ID);
     await page.fill('input[name="vPASS"]', USER_PASS);
     await page.click('input[name="BUTTON1"]');
@@ -70,10 +68,7 @@ async function contextoPopup(page, timeout = 15_000) {
     await cerrarModal(page);
 
     /* 3. MENÚ → Programación */
-    await page
-      .locator('img[src*="PROGRAMACION"], img[alt="Matriculas"]')
-      .first()
-      .click();
+    await page.locator('img[src*="PROGRAMACION"], img[alt="Matriculas"]').first().click();
     await page.waitForLoadState('networkidle');
 
     /* 4. PLAN + Iniciar */
@@ -86,43 +81,29 @@ async function contextoPopup(page, timeout = 15_000) {
 
     /* 6. FILTRO “Pendientes por programar” */
     await pop.selectOption('select[name$="APROBO"]', ESTADO_VAL);
-    await page.waitForTimeout(800);          // post‑back
-    pop = await contextoPopup(page);         // nuevo contexto válido
+    await page.waitForTimeout(800);               // post‑back
+    pop = await contextoPopup(page);              // nuevo contexto
 
-    /* 7. screenshot del listado inicial */
+    /* 7. Esperar la tabla y screenshot inicial */
+    await pop.waitForSelector('input[type=checkbox]', { timeout: 15_000 });
     const listPNG = stamp('list');
     await page.screenshot({ path: listPNG, fullPage: true });
 
-    /* 8. Validar disponibilidad general */
-    const disponible = await pop
-      .locator('input[type=checkbox][name="vCHECK"]:not([disabled])')
-      .count();
-
-    if (!disponible) {
-      await discord('Sin disponibilidad ❕', '#ffaa00', listPNG);
-      console.log('Sin filas pendientes. Termina limpio.');
-      process.exit(0);                       // éxito sin reservas
-    }
-
-    /* 9. BUCLE DE HORARIOS */
+    /* 8. BUCLE DE HORARIOS */
     for (const hora of HORARIOS) {
-      await pop.evaluate(() => (document.querySelector('body').scrollTop = 0));
+      await pop.evaluate(() => (document.body.scrollTop = 0));
 
-      const fila = pop
-        .locator('input[type=checkbox][name="vCHECK"]:not([disabled])')
-        .first();
-      if (!await fila.count()) break;        // se agotaron mientras iteraba
+      // selector genérico: cualquier checkbox habilitado
+      const fila = pop.locator('input[type=checkbox]:not([disabled])').first();
+      if (!await fila.count()) break;             // se agotaron
+
       await fila.check();
-
       await pop.click('text=Asignar');
       await pop.locator('select[name="VTSEDE"]').waitFor();
 
       await pop.selectOption('select[name="VTSEDE"]', { label: SEDE_TXT });
-      const dOpt = pop
-        .locator('select[name="VFDIA"] option:not([disabled])')
-        .nth(1);
-      const dVal = await dOpt.getAttribute('value');
-      await pop.selectOption('select[name="VFDIA"]', dVal);
+      const dOpt = pop.locator('select[name="VFDIA"] option:not([disabled])').nth(1);
+      await pop.selectOption('select[name="VFDIA"]', await dOpt.getAttribute('value'));
       await pop.selectOption('select[name="VFHORA"]', { label: hora });
 
       await pop.click('text=Confirmar');
@@ -130,7 +111,7 @@ async function contextoPopup(page, timeout = 15_000) {
       console.log(`✅  Clase asignada ${hora}`);
     }
 
-    /* 10. OK */
+    /* 9. Cierre */
     const okPNG = stamp('after');
     await page.screenshot({ path: okPNG, fullPage: true });
     await discord('Clases agendadas ✅', '#00ff00', listPNG, okPNG);
