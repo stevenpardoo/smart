@@ -1,4 +1,4 @@
-/*  Auto‑Class Bot – agenda 18 h y 19 h 30 y manda capturas a Discord  */
+/*  Auto-Class Bot – agenda 18 h y 19 h 30 y manda capturas a Discord  */
 const { chromium }               = require('playwright');
 const { Webhook, MessageBuilder } = require('discord-webhook-node');
 const dayjs                       = require('dayjs');
@@ -6,14 +6,15 @@ const dayjs                       = require('dayjs');
 /* ─── ENV ───────────────────────────────────────────────────────── */
 const { USER_ID, USER_PASS, WEBHOOK_URL } = process.env;
 if (!USER_ID || !USER_PASS || !WEBHOOK_URL) {
-  console.error('❌  Faltan USER_ID, USER_PASS o WEBHOOK_URL'); process.exit(1);
+  console.error('❌  Faltan USER_ID, USER_PASS o WEBHOOK_URL');
+  process.exit(1);
 }
 
 /* ─── PARÁMETROS DEL FLUJO ─────────────────────────────────────── */
 const PLAN_TXT   = /ING-B1, B2 Y C1 PLAN 582H/i;
 const SEDE_TXT   = 'CENTRO MAYOR';
-const HORARIOS   = ['18:00', '19:30'];          // orden en que se toman
-const ESTADO_VAL = '2';                         // value de “Pendientes…”
+const HORARIOS   = ['18:00', '19:30'];           // orden en que se toman
+const ESTADO_VAL = '2';                          // value de “Pendientes…”  
 
 /* ─── Discord helper ───────────────────────────────────────────── */
 const hook = new Webhook(WEBHOOK_URL);
@@ -49,11 +50,12 @@ async function contextoPopup(page, timeout = 15_000) {
   throw new Error('No apareció select[name$="APROBO"]');
 }
 
-/* Selecciona y marca el checkbox de la PRIMERA fila pendiente */
-async function seleccionarPrimeraFila(pop) {
-  const cb = pop.locator('input[type="checkbox"]:not([disabled])').first();
-  if (!(await cb.count())) return false;
-  await cb.check({ force: true });
+/* ─── ÚNICO CAMBIO: seleccionar siempre el PRIMER checkbox ─────── */
+async function seleccionarFilaPendiente(pop) {
+  const chk = pop.locator('input[type="checkbox"][name="vCHECK"]').first();
+  if (!await chk.count()) return false;
+  await chk.scrollIntoViewIfNeeded();
+  await chk.check();
   return true;
 }
 
@@ -68,14 +70,18 @@ async function seleccionarPrimeraFila(pop) {
     /* 1. LOGIN */
     await page.goto('https://schoolpack.smart.edu.co/idiomas/alumnos.aspx', { waitUntil: 'domcontentloaded' });
     await page.fill('input[name="vUSUCOD"]', USER_ID);
-    await page.fill('input[name="vPASS"]',  USER_PASS);
+    await page.fill('input[name="vPASS"]', USER_PASS);
     await page.click('input[name="BUTTON1"]');
 
     /* 2. MODAL */
-    await page.waitForTimeout(1000); await cerrarModal(page);
+    await page.waitForTimeout(1000);
+    await cerrarModal(page);
 
     /* 3. MENÚ → Programación */
-    await page.locator('img[src*="PROGRAMACION"], img[alt="Matriculas"]').first().click();
+    await page
+      .locator('img[src*="PROGRAMACION"], img[alt="Matriculas"]')
+      .first()
+      .click();
     await page.waitForLoadState('networkidle');
 
     /* 4. PLAN + Iniciar */
@@ -86,43 +92,44 @@ async function seleccionarPrimeraFila(pop) {
     /* 5. POPUP */
     let pop = await contextoPopup(page);
 
-    /* 6. Estado Pendiente */
+    /* 6. Estado “Pendientes por programar” */
     await pop.selectOption('select[name$="APROBO"]', ESTADO_VAL);
-    await page.waitForTimeout(800);           // post‑back
+    await page.waitForTimeout(800);
     pop = await contextoPopup(page);
 
-    /* 7. Screenshot de la lista */
+    /* 7. Captura listado inicial */
     const listPNG = stamp('list');
     await page.screenshot({ path: listPNG, fullPage: true });
 
-    /* 8. Seleccionar PRIMERA fila disponible */
-    if (!(await seleccionarPrimeraFila(pop))) {
+    /* 8. Verifica disponibilidad inicial */
+    if (!(await seleccionarFilaPendiente(pop))) {
       await discord('Sin disponibilidad ❕', '#ffaa00', listPNG);
       console.log('Sin filas pendientes. Termina limpio.');
       process.exit(0);
     }
 
-    /* 9. Asignar esa única fila con ambos horarios */
-    await pop.locator('input[value="Asignar"]').click();
-    await pop.locator('select[name="VTSEDE"]').waitFor();
-
+    /* 9. Bucle por horarios */
     for (const hora of HORARIOS) {
+      await pop.evaluate(() => (document.querySelector('body').scrollTop = 0));
+
+      if (!(await seleccionarFilaPendiente(pop))) break;
+
+      await pop.locator('input[value="Asignar"]').click();
+      await pop.locator('select[name="VTSEDE"]').waitFor();
+
       await pop.selectOption('select[name="VTSEDE"]', { label: SEDE_TXT });
-      const dOpt = pop.locator('select[name="VFDIA"] option:not([disabled])').nth(1);
+      const dOpt = pop
+        .locator('select[name="VFDIA"] option:not([disabled])')
+        .nth(1);
       await pop.selectOption('select[name="VFDIA"]', await dOpt.getAttribute('value'));
       await pop.selectOption('select[name="VFHORA"]', { label: hora });
 
       await pop.click('text=Confirmar');
       await page.waitForLoadState('networkidle');
       console.log(`✅  Clase asignada ${hora}`);
-
-      // después de la primera confirmación, vuelve automáticamente a la misma ficha
-      if (hora !== HORARIOS[HORARIOS.length - 1]) {
-        await pop.locator('input[value="Asignar"]').waitFor();
-      }
     }
 
-    /* 10. OK final */
+    /* 10. OK */
     const okPNG = stamp('after');
     await page.screenshot({ path: okPNG, fullPage: true });
     await discord('Clases agendadas ✅', '#00ff00', listPNG, okPNG);
