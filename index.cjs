@@ -10,11 +10,11 @@ if (!USER_ID || !USER_PASS || !WEBHOOK_URL) {
   process.exit(1);
 }
 
-/* ─── PARÁMETROS ───────────────────────────────────────────────── */
+/* ─── PARÁMETROS DEL FLUJO ─────────────────────────────────────── */
 const PLAN_TXT   = /ING-B1, B2 Y C1 PLAN 582H/i;
 const SEDE_TXT   = 'CENTRO MAYOR';
 const HORARIOS   = ['18:00', '19:30'];
-const ESTADO_VAL = '2';  
+const ESTADO_VAL = '2';  // value de “Pendientes…”  
 
 /* ─── Discord helper ───────────────────────────────────────────── */
 const hook = new Webhook(WEBHOOK_URL);
@@ -27,16 +27,16 @@ async function discord(title, color, ...files) {
 const stamp = b => `${b}_${dayjs().format('YYYY-MM-DD_HH-mm-ss')}.png`;
 
 async function cerrarModal(page) {
-  const btn = page.locator('#gxp0_cls');
-  if (await btn.isVisible().catch(()=>false)) return btn.click();
-  await page.evaluate(()=> {
+  const x = page.locator('#gxp0_cls');
+  if (await x.isVisible().catch(()=>false)) return x.click();
+  await page.evaluate(()=>{
     document.querySelectorAll('div[id^="gxp"][class*="popup"]').forEach(e=>e.style.display='none');
   });
 }
 
 async function contextoPopup(page, timeout = 15000) {
-  const deadline = Date.now()+timeout;
-  while (Date.now()<deadline) {
+  const deadline = Date.now() + timeout;
+  while (Date.now() < deadline) {
     for (const ctx of [page, ...page.frames()]) {
       if (await ctx.locator('select[name$="APROBO"]').count()) return ctx;
     }
@@ -45,86 +45,94 @@ async function contextoPopup(page, timeout = 15000) {
   throw new Error('No apareció select[name$="APROBO"]');
 }
 
-/* ─── CAMBIO: clicar la 3ª celda de la 1ª fila ───────────────── */
+/* ─── ÚNICO CAMBIO: click en la primera fila de la tabla ───────── */
 async function seleccionarFilaPendiente(pop) {
   const row = pop.locator('table tbody tr').first();
   if (!await row.count()) return false;
-  // la celda 2 (índice 0=Nivel, 1=Clase No., 2=Resumen/Nombre)
-  await row.locator('td').nth(2).click();
+  // llevar al viewport y hacer click sobre la fila entera
+  await row.scrollIntoViewIfNeeded();
+  await row.click();
   return true;
 }
 
 /* ─── FLUJO PRINCIPAL ──────────────────────────────────────────── */
 (async () => {
-  const browser = await chromium.launch({ headless:true });
+  const browser = await chromium.launch({ headless: true });
   const ctx     = await browser.newContext({ viewport:{ width:1280, height:720 } });
   const page    = await ctx.newPage();
   page.setDefaultTimeout(90000);
 
   try {
-    /* 1. LOGIN */
+    // 1. LOGIN
     await page.goto('https://schoolpack.smart.edu.co/idiomas/alumnos.aspx',{waitUntil:'domcontentloaded'});
     await page.fill('input[name="vUSUCOD"]', USER_ID);
     await page.fill('input[name="vPASS"]', USER_PASS);
     await page.click('input[name="BUTTON1"]');
 
-    /* 2. MODAL */
+    // 2. Cerrar modal
     await page.waitForTimeout(1000);
     await cerrarModal(page);
 
-    /* 3. MENÚ → Programación */
+    // 3. Menú → Programación
     await page.locator('img[src*="PROGRAMACION"], img[alt="Matriculas"]').first().click();
     await page.waitForLoadState('networkidle');
 
-    /* 4. PLAN + Iniciar */
+    // 4. Plan + Iniciar
     await page.locator(`text=${PLAN_TXT}`).first().click();
     await page.click('text=Iniciar');
     await page.waitForLoadState('networkidle');
 
-    /* 5. POPUP */
+    // 5. Contexto popup
     let pop = await contextoPopup(page);
 
-    /* 6. Filtro “Pendientes por programar” */
+    // 6. Filtrar Pendientes  
     await pop.selectOption('select[name$="APROBO"]', ESTADO_VAL);
     await page.waitForTimeout(800);
     pop = await contextoPopup(page);
 
-    /* 7. Screenshot inicial */
+    // 7. Captura inicial
     const listPNG = stamp('list');
     await page.screenshot({ path:listPNG, fullPage:true });
 
-    /* 8. Seleccionar la PRIMERA fila */
+    // 8. Seleccionar la primera fila
     if (!await seleccionarFilaPendiente(pop)) {
       await discord('Sin disponibilidad ❕','#ffaa00',listPNG);
       return process.exit(0);
     }
 
-    /* 9. Bucle horarios */
+    // 9. Bucle de horarios
     for (const hora of HORARIOS) {
+      // asegurarse de resetear scroll
       await pop.evaluate(()=>document.body.scrollTop=0);
 
-      // volvemos a clicar la primera fila
+      // volver a seleccionar la misma primera fila
       if (!await seleccionarFilaPendiente(pop)) break;
 
+      // asignar
       await pop.click('text=Asignar');
       await pop.locator('select[name="VTSEDE"]').waitFor();
 
-      await pop.selectOption('select[name="VTSEDE"]',{label:SEDE_TXT});
+      // sede
+      await pop.selectOption('select[name="VTSEDE"]',{ label: SEDE_TXT });
+
+      // día y hora
       const dVal = await pop.locator('select[name="VFDIA"] option:not([disabled])').nth(1).getAttribute('value');
       await pop.selectOption('select[name="VFDIA"]', dVal);
-      await pop.selectOption('select[name="VFHORA"]',{label:hora});
+      await pop.selectOption('select[name="VFHORA"]',{ label: hora });
 
+      // confirmar
       await pop.click('text=Confirmar');
       await page.waitForLoadState('networkidle');
+      console.log(`✅ Clase asignada ${hora}`);
     }
 
-    /* 10. Screenshot final */
+    // 10. Captura final
     const okPNG = stamp('after');
     await page.screenshot({ path:okPNG, fullPage:true });
     await discord('Clases agendadas ✅','#00ff00',listPNG,okPNG);
 
-  } catch(e) {
-    console.error(e);
+  } catch (err) {
+    console.error(err);
     const crashPNG = stamp('crash');
     await page.screenshot({ path:crashPNG, fullPage:true }).catch(()=>{});
     await discord('Crash ❌','#ff0000',crashPNG);
