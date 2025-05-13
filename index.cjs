@@ -50,16 +50,23 @@ async function contextoPopup(page, timeout = 15000) {
 }
 
 /* ─── Selección por teclado (flecha abajo + espacio) ─────────── */
+// Reemplaza SOLO tu función seleccionarFilaPendiente por esta:
 async function seleccionarFilaPendiente(pop, page) {
-  const row = pop.locator('table tbody tr').first();
-  if (!await row.count()) return false;
-  // Hacer foco en la fila y simular flecha+espacio
-  await row.evaluate(el => el.setAttribute('tabindex','0'));
-  await row.focus();
-  await page.keyboard.press('ArrowDown');
+  // 1. Clic en la fila 9 (índice 8)
+  const fila9 = pop.locator('table tbody tr').nth(8);
+  if (!await fila9.count()) return false;
+  await fila9.scrollIntoViewIfNeeded();
+  await fila9.click();
+
+  // 2. Subir 8 veces con teclado para llegar a la fila 1
+  for (let i = 0; i < 8; i++) {
+    await page.keyboard.press('ArrowUp');
+  }
+  // 3. Presionar espacio para “checkearla”
   await page.keyboard.press('Space');
   return true;
 }
+
 
 /* ─── FLUJO PRINCIPAL ──────────────────────────────────────────── */
 (async () => {
