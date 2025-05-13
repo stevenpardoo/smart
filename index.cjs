@@ -46,17 +46,17 @@ async function contextoPopup(page, timeout = 15000) {
 }
 
 /* ─── ÚNICO CAMBIO: click en la primera fila de la tabla ───────── */
+// Reemplaza SOLO tu función seleccionarFilaPendiente por esto:
 async function seleccionarFilaPendiente(pop) {
-  // 1. Localiza la primera fila del tbody
-  const firstRow = pop.locator('table tbody tr').first();
-  const rowId    = await firstRow.getAttribute('id');
-  if (!rowId) return false;
+  // 1. Localiza la PRIMERA fila cuyo id empieza por "W0030Grid1ContainerRow_"
+  const row = pop.locator('tr[id^="W0030Grid1ContainerRow_"]').first();
+  if (!await row.count()) return false;
 
-  // 2. Click directo sobre el <tr id="...0001">
-  await pop.click(`#${rowId}`);
+  // 2. Asegúrala en viewport y haz clic sobre ella
+  await row.scrollIntoViewIfNeeded();
+  await row.click();
   return true;
 }
-
 
 /* ─── FLUJO PRINCIPAL ──────────────────────────────────────────── */
 (async () => {
