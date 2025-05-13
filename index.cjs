@@ -47,15 +47,16 @@ async function contextoPopup(page, timeout = 15000) {
 
 /* ─── ÚNICO CAMBIO: click en la primera fila de la tabla ───────── */
 async function seleccionarFilaPendiente(pop) {
-  return await pop.evaluate(() => {
-    const row = document.querySelector('table tbody tr');
-    if (!row) return false;
-    row.scrollIntoView({ block: 'center' });
-    // dispara el click nativo
-    row.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }));
-    return true;
-  });
+  // 1. Localiza la primera fila del tbody
+  const firstRow = pop.locator('table tbody tr').first();
+  const rowId    = await firstRow.getAttribute('id');
+  if (!rowId) return false;
+
+  // 2. Click directo sobre el <tr id="...0001">
+  await pop.click(`#${rowId}`);
+  return true;
 }
+
 
 /* ─── FLUJO PRINCIPAL ──────────────────────────────────────────── */
 (async () => {
