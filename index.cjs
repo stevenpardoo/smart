@@ -47,12 +47,14 @@ async function contextoPopup(page, timeout = 15000) {
 
 /* ─── ÚNICO CAMBIO: click en la primera fila de la tabla ───────── */
 async function seleccionarFilaPendiente(pop) {
-  // toma el primer span.ReadonlyAttribute (la celda “Resumen”)
-  const span = pop.locator('table tbody tr span.ReadonlyAttribute').first();
-  if (!await span.count()) return false;
-  await span.scrollIntoViewIfNeeded();
-  await span.click();
-  return true;
+  return await pop.evaluate(() => {
+    const row = document.querySelector('table tbody tr');
+    if (!row) return false;
+    row.scrollIntoView({ block: 'center' });
+    // dispara el click nativo
+    row.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }));
+    return true;
+  });
 }
 
 /* ─── FLUJO PRINCIPAL ──────────────────────────────────────────── */
