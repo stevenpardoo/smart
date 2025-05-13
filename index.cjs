@@ -47,11 +47,11 @@ async function contextoPopup(page, timeout = 15000) {
 
 /* ─── ÚNICO CAMBIO: click en la primera fila de la tabla ───────── */
 async function seleccionarFilaPendiente(pop) {
-  const row = pop.locator('table tbody tr').first();
-  if (!await row.count()) return false;
-  // llevar al viewport y hacer click sobre la fila entera
-  await row.scrollIntoViewIfNeeded();
-  await row.click();
+  // toma el primer span.ReadonlyAttribute (la celda “Resumen”)
+  const span = pop.locator('table tbody tr span.ReadonlyAttribute').first();
+  if (!await span.count()) return false;
+  await span.scrollIntoViewIfNeeded();
+  await span.click();
   return true;
 }
 
