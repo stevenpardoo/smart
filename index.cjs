@@ -302,3 +302,4 @@ async function seleccionarFilaPendiente(pop, page) {
     await browser.close();
   }
 })();
+
