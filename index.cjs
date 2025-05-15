@@ -12,8 +12,8 @@ if (!USER_ID || !USER_PASS || !WEBHOOK_URL) {
 /* ─── PARÁMETROS DEL FLUJO ─────────────────────────────────────── */
 const PLAN_TXT   = /ING-B1, B2 Y C1 PLAN 582H/i;
 const SEDE_TXT   = 'CENTRO MAYOR';
-const HORARIOS   = ['18:00', '19:30'];        // orden en que se toman
-const ESTADO_VAL = '2';                       // value = Pendientes por programar
+const HORARIOS   = ['18:00', '19:30'];          // dos horarios fijos
+const ESTADO_VAL = '2';                         // Pendientes por programar
 
 /* ─── Discord helper ───────────────────────────────────────────── */
 const hook = new Webhook(WEBHOOK_URL);
@@ -38,18 +38,18 @@ async function contextoPopup(page, timeout = 15_000) {
     for (const ctx of [page, ...page.frames()]) {
       if (await ctx.locator('select[name$="APROBO"]').count()) return ctx;
     }
-    await page.waitForTimeout(250);
+    await page.waitForTimeout(300);
   }
   throw new Error('No apareció el popup de programación');
 }
 
-/* FILA 0 (según DOM) con estado Pendiente */
-async function seleccionarPrimeraFila(pop) {
-  // asegura lista scrolleada arriba
+/* CLIC forzado en la PRIMERA fila (CLASE 1) */
+async function clickPrimeraFila(pop) {
   await pop.evaluate(() => { document.querySelector('body').scrollTop = 0; });
-  const fila0 = pop.locator('tr', { hasText: 'Pendiente' }).first();
-  if (!(await fila0.count())) return false;
-  await fila0.click();
+  // el primer <tr> después del encabezado
+  const fila = pop.locator('tbody > tr').first();
+  if (!(await fila.count())) return false;
+  await fila.click({ force: true });
   return true;
 }
 
@@ -79,22 +79,21 @@ async function seleccionarPrimeraFila(pop) {
     await page.click('text=Iniciar');
     await page.waitForLoadState('networkidle');
 
-    /* 5. POPUP  */
+    /* 5. POPUP */
     let pop = await contextoPopup(page);
 
-    /* 6. Estado Pendiente */
+    /* 6. Filtro Pendientes */
     await pop.selectOption('select[name$="APROBO"]', ESTADO_VAL);
-    await page.waitForTimeout(700);
-    pop = await contextoPopup(page);               // nuevo iframe tras post-back
+    await page.waitForTimeout(600);
+    pop = await contextoPopup(page);         // iframe recargado
 
     /* 7. screenshot lista */
     const listPNG = stamp('list');
     await page.screenshot({ path: listPNG, fullPage: true });
 
-    /* 8. Primera fila obligatoria */
-    if (!(await seleccionarPrimeraFila(pop))) {
-      await discord('Sin disponibilidad', '#ffaa00', listPNG);
-      console.log('No hay fila Pendiente en primera posición');
+    /* 8. Forzar clic en la PRIMERA fila (CLASE 1) */
+    if (!(await clickPrimeraFila(pop))) {
+      await discord('Sin filas Pendiente', '#ffaa00', listPNG);
       process.exit(0);
     }
 
@@ -102,11 +101,11 @@ async function seleccionarPrimeraFila(pop) {
     await pop.locator('input[value="Asignar"]').click();
     await pop.locator('select[name="VTSEDE"]').waitFor();
 
-    /* 10. Dos horarios  */
+    /* 10. Agenda los dos horarios */
     for (const hora of HORARIOS) {
       await pop.selectOption('select[name="VTSEDE"]', { label: SEDE_TXT });
-      const d = pop.locator('select[name="VFDIA"] option:not([disabled])').nth(1);
-      await pop.selectOption('select[name="VFDIA"]', await d.getAttribute('value'));
+      const d1 = pop.locator('select[name="VFDIA"] option:not([disabled])').nth(1);
+      await pop.selectOption('select[name="VFDIA"]', await d1.getAttribute('value'));
       await pop.selectOption('select[name="VFHORA"]', { label: hora });
 
       await pop.click('text=Confirmar');
@@ -114,6 +113,7 @@ async function seleccionarPrimeraFila(pop) {
       console.log(`✅  Clase asignada ${hora}`);
 
       if (hora !== HORARIOS[HORARIOS.length - 1]) {
+        // vuelve al mismo formulario; no toca lista otra vez
         await pop.locator('input[value="Asignar"]').waitFor();
       }
     }
@@ -122,6 +122,7 @@ async function seleccionarPrimeraFila(pop) {
     const okPNG = stamp('after');
     await page.screenshot({ path: okPNG, fullPage: true });
     await discord('Clases agendadas', '#00ff00', listPNG, okPNG);
+    console.log('🎉  Flujo completado');
   } catch (err) {
     console.error(err);
     const crash = stamp('crash');
