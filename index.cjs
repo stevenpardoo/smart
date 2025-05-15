@@ -37,7 +37,7 @@ async function cerrarModal(page) {
   });
 }
 
-async function contextoPopup(page, timeout = 15_000) {
+  async function contextoPopup(page, timeout = 15_000) {
   const deadline = Date.now() + timeout;
   while (Date.now() < deadline) {
     for (const ctx of [page, ...page.frames()]) {
@@ -116,7 +116,7 @@ async function seleccionarFilaPendiente(pop) {
 
       /* ⇧ Sube 8 posiciones para asegurar la primera fila */
       for (let i = 0; i < 8; i++) {
-        await pop.keyboard.press('ArrowUp');
+        await page.keyboard.press('ArrowUp');
         await pop.waitForTimeout(50);
       }
 
