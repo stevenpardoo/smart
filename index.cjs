@@ -1,4 +1,5 @@
 /*  Auto-Class Bot – agenda 18 h y 19 h 30 y manda capturas a Discord  */
+require('dotenv').config();
 const { chromium }               = require('playwright');
 const { Webhook, MessageBuilder } = require('discord-webhook-node');
 const dayjs                       = require('dayjs');

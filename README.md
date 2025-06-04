@@ -4,15 +4,14 @@ This project schedules classes automatically using Playwright.
 
 ## Setup
 
-Install dependencies and run locally:
+Install dependencies and run locally. You can place your credentials in a `.env` file (see the included example) so the script picks them up automatically:
 
 ```bash
 npm install
-USER_ID=your_user \
-USER_PASS=your_pass \
-WEBHOOK_URL=https://discordapp.com/api/webhooks/... \
 node index.cjs
 ```
+
+The repository ships with a sample `.env` file containing the credentials used by the scheduled workflow. Edit it if you need to update your own values.
 
 ## GitHub Actions
 
