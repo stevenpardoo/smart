@@ -43,13 +43,19 @@ async function contextoPopup(page, timeout = 15_000) {
   throw new Error('No apareció el popup de programación');
 }
 
-/* CLIC forzado en la PRIMERA fila (CLASE 1) */
-async function clickPrimeraFila(pop) {
-  await pop.evaluate(() => { document.querySelector('body').scrollTop = 0; });
-  // el primer <tr> después del encabezado
-  const fila = pop.locator('tbody > tr').first();
-  if (!(await fila.count())) return false;
-  await fila.click({ force: true });
+/* Selecciona la primera fila usando fila 9 + flechas ↑ + Enter */
+async function seleccionarFilaPendiente(pop, page) {
+  // clic en la fila 9 (índice base cero)
+  const fila9 = pop.locator('table tbody tr').nth(8);
+  if (!await fila9.count()) return false;
+  await fila9.scrollIntoViewIfNeeded();
+  await fila9.click();
+
+  // subir ocho veces hasta la fila 1 y confirmarla
+  for (let i = 0; i < 8; i++) {
+    await page.keyboard.press('ArrowUp');
+  }
+  await page.keyboard.press('Enter');
   return true;
 }
 
@@ -91,18 +97,21 @@ async function clickPrimeraFila(pop) {
     const listPNG = stamp('list');
     await page.screenshot({ path: listPNG, fullPage: true });
 
-    /* 8. Forzar clic en la PRIMERA fila (CLASE 1) */
-    if (!(await clickPrimeraFila(pop))) {
+    /* 8. Seleccionar la fila 1 (desde la 9 con flechas) */
+    if (!(await seleccionarFilaPendiente(pop, page))) {
       await discord('Sin filas Pendiente', '#ffaa00', listPNG);
       process.exit(0);
     }
 
-    /* 9. Asignar */
-    await pop.locator('input[value="Asignar"]').click();
-    await pop.locator('select[name="VTSEDE"]').waitFor();
-
-    /* 10. Agenda los dos horarios */
+    /* 9. Agenda cada horario */
     for (const hora of HORARIOS) {
+      // volver a seleccionar la fila 1 cada vez
+      await pop.evaluate(() => document.body.scrollTop = 0);
+      if (!(await seleccionarFilaPendiente(pop, page))) break;
+
+      await pop.click('text=Asignar');
+      await pop.locator('select[name="VTSEDE"]').waitFor();
+
       await pop.selectOption('select[name="VTSEDE"]', { label: SEDE_TXT });
       const d1 = pop.locator('select[name="VFDIA"] option:not([disabled])').nth(1);
       await pop.selectOption('select[name="VFDIA"]', await d1.getAttribute('value'));
@@ -111,11 +120,6 @@ async function clickPrimeraFila(pop) {
       await pop.click('text=Confirmar');
       await page.waitForLoadState('networkidle');
       console.log(`✅  Clase asignada ${hora}`);
-
-      if (hora !== HORARIOS[HORARIOS.length - 1]) {
-        // vuelve al mismo formulario; no toca lista otra vez
-        await pop.locator('input[value="Asignar"]').waitFor();
-      }
     }
 
     /* 11. OK */
