@@ -61,8 +61,8 @@ async function seleccionarFilaPendiente(pop, page) {
 
 /* ─── FLUJO PRINCIPAL ──────────────────────────────────────────── */
 (async () => {
-  const browser = await chromium.launch({ headless: true });
-  const ctx     = await browser.newContext({ viewport: { width: 1280, height: 720 } });
+  const browser = await chromium.launch({ headless: true, args: ["--ignore-certificate-errors"] });
+  const ctx     = await browser.newContext({ viewport: { width: 1280, height: 720 }, ignoreHTTPSErrors: true });
   const page    = await ctx.newPage();
   page.setDefaultTimeout(90_000);
 
